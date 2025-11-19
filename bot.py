@@ -14,7 +14,7 @@ from datetime import datetime
 import sys
 from dotenv import load_dotenv
 
-# Carregar .env
+# Load .env
 load_dotenv()
 
 BOT_TOKEN = os.getenv('BOT_TOKEN')
@@ -26,7 +26,7 @@ PAYPAL_MODE = os.getenv('PAYPAL_MODE', 'sandbox')
 PAYPAL_CURRENCY = os.getenv('PAYPAL_CURRENCY', 'EUR').upper()
 USE_LOCAL = os.getenv('USE_LOCAL', 'false').lower() == 'true'
 LOCAL_BASE_PATH = os.getenv('LOCAL_BASE_PATH')
-BANKING_PATH = os.getenv('BANKING_PATH')  # Novo: Caminho específico para banking
+BANKING_PATH = os.getenv('BANKING_PATH')  # New: Specific path for banking
 FTP_HOST = os.getenv('FTP_HOST')
 FTP_PORT = os.getenv('FTP_PORT', '21')
 FTP_USER = os.getenv('FTP_USER')
@@ -37,25 +37,25 @@ GUILD_ID = int(os.getenv('GUILD_ID') or '0')
 PELTCURRENCY_PATH = os.getenv('PELTCURRENCY_PATH')
 CAC_ROLE_ID = int(os.getenv('CAC_ROLE_ID') or '0')
 
-# Validações mínimas
+# Minimum validations
 if not BOT_TOKEN:
-    print("Erro: BOT_TOKEN não definido no .env"); sys.exit(1)
+    print("Error: BOT_TOKEN not defined in .env"); sys.exit(1)
 if not SALES_CHANNEL_ID:
-    print("Erro: SALES_CHANNEL_ID não definido no .env"); sys.exit(1)
+    print("Error: SALES_CHANNEL_ID not defined in .env"); sys.exit(1)
 if not ADMIN_ID:
-    print("Erro: ADMIN_ID não definido no .env"); sys.exit(1)
+    print("Error: ADMIN_ID not defined in .env"); sys.exit(1)
 if not PAYPAL_CLIENT_ID:
-    print("Erro: PAYPAL_CLIENT_ID não definido no .env"); sys.exit(1)
+    print("Error: PAYPAL_CLIENT_ID not defined in .env"); sys.exit(1)
 if not PAYPAL_CLIENT_SECRET:
-    print("Erro: PAYPAL_CLIENT_SECRET não definido no .env"); sys.exit(1)
+    print("Error: PAYPAL_CLIENT_SECRET not defined in .env"); sys.exit(1)
 if USE_LOCAL and not LOCAL_BASE_PATH:
-    print("Erro: LOCAL_BASE_PATH não definido no .env (obrigatório quando USE_LOCAL=true)"); sys.exit(1)
+    print("Error: LOCAL_BASE_PATH not defined in .env (required when USE_LOCAL=true)"); sys.exit(1)
 if not USE_LOCAL and (not FTP_HOST or not FTP_BASE_PATH):
-    print("Erro: FTP_HOST e FTP_BASE_PATH são obrigatórios quando USE_LOCAL=false"); sys.exit(1)
+    print("Error: FTP_HOST and FTP_BASE_PATH are required when USE_LOCAL=false"); sys.exit(1)
 if not SEGUROS_CHANNEL_ID:
-    print("Erro: SEGUROS_CHANNEL_ID não definido no .env"); sys.exit(1)
-if not BANKING_PATH:  # Novo: Validar BANKING_PATH
-    print("Erro: BANKING_PATH não definido no .env"); sys.exit(1)
+    print("Error: SEGUROS_CHANNEL_ID not defined in .env"); sys.exit(1)
+if not BANKING_PATH:  # New: Validate BANKING_PATH
+    print("Error: BANKING_PATH not defined in .env"); sys.exit(1)
 if USE_LOCAL and not os.path.exists(BANKING_PATH):
     os.makedirs(BANKING_PATH, exist_ok=True)
 
@@ -70,19 +70,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Inicializar PayPal
+# Initialize PayPal
 try:
     paypalrestsdk.configure({
         "mode": PAYPAL_MODE,
         "client_id": PAYPAL_CLIENT_ID,
         "client_secret": PAYPAL_CLIENT_SECRET
     })
-    logger.info("SDK do PayPal inicializado com sucesso")
+    logger.info("PayPal SDK initialized successfully")
 except Exception as e:
-    logger.error(f"Erro ao inicializar SDK do PayPal: {str(e)}")
+    logger.error(f"Error initializing PayPal SDK: {str(e)}")
     sys.exit(1)
 
-# Arquivos
+# Files
 ITEMS_FILE = "items_catalog.json"
 COUPONS_FILE = "coupons.json"
 PASSES_FILE = "battle_passes.json"
@@ -91,7 +91,7 @@ ITEMS_LIST_TXT = "lista_itens_venda.txt"
 PASSES_LIST_TXT = "lista_passes_venda.txt"
 SEGUROS_FILE = "seguros.json"
 SEGUROS_LOG = "seguros_acionados.txt"
-COMPRAS_FILE = "compras.json"  # NOVO: Arquivo para registrar compras com seguro
+COMPRAS_FILE = "compras.json"  # NEW: File to register purchases with insurance
 
 def load_json(filename, default=None):
     if default is None:
@@ -103,46 +103,46 @@ def load_json(filename, default=None):
         with open(filename, 'r', encoding='utf-8') as f:
             return json.load(f)
     except Exception as e:
-        logger.error(f"Erro ao carregar {filename}: {str(e)}")
+        logger.error(f"Error loading {filename}: {str(e)}")
         save_json(filename, default)
         return default
 
 def save_json(filename, data):
-    logger.info(f"Salvando {filename} com dados: {data}")
+    logger.info(f"Saving {filename} with data: {data}")
     try:
         with open(filename, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
     except Exception as e:
-        logger.error(f"Erro ao salvar {filename}: {str(e)}")
+        logger.error(f"Error saving {filename}: {str(e)}")
 
 def save_list_to_txt(filename, catalog):
     try:
         with open(filename, 'w', encoding='utf-8') as f:
             if not catalog:
-                f.write("Nenhum item/passe cadastrado.\n")
+                f.write("No items/passes registered.\n")
                 return
-            f.write(f"--- Lista Atualizada em {datetime.now().strftime('%d/%m/%Y %H:%M:%S')} ---\n\n")
+            f.write(f"--- List Updated on {datetime.now().strftime('%d/%m/%Y %H:%M:%S')} ---\n\n")
             for item_id, data in catalog.items():
                 # Format price according to selected currency (simple symbol mapping)
                 symbol = '€' if PAYPAL_CURRENCY == 'EUR' else (PAYPAL_CURRENCY + ' ')
                 price_str = f"{symbol}{data.get('price', 0.0):.2f}"
-                f.write(f"- {data.get('name', 'Nome Indefinido')} ({item_id}): {price_str}\n")
-            f.write("\n--- Fim da Lista ---")
-        logger.info(f"Lista salva em {filename}")
+                f.write(f"- {data.get('name', 'Undefined Name')} ({item_id}): {price_str}\n")
+            f.write("\n--- End of List ---")
+        logger.info(f"List saved in {filename}")
     except Exception as e:
-        logger.error(f"Erro ao salvar lista em {filename}: {str(e)}")
+        logger.error(f"Error saving list in {filename}: {str(e)}")
 
-# Carregar dados
+# Load data
 items_catalog = load_json(ITEMS_FILE, {})
 coupons = load_json(COUPONS_FILE, {})
 passes_catalog = load_json(PASSES_FILE, {})
 user_data = load_json(USER_DATA_FILE, {})
 seguros = load_json(SEGUROS_FILE, {})
-compras = load_json(COMPRAS_FILE, {})  # NOVO: Carregar compras.json
+compras = load_json(COMPRAS_FILE, {})  # NEW: Load compras.json
 save_list_to_txt(ITEMS_LIST_TXT, items_catalog)
 save_list_to_txt(PASSES_LIST_TXT, passes_catalog)
 
-# Função de migração automática: converte itens antigos (com 'script' raiz) para o novo formato com 'variations'
+# Automatic migration function: converts old items (with root 'script') to new format with 'variations'
 def migrate_items_to_variations():
     migrated = False
     for iid, data in list(items_catalog.items()):
@@ -153,17 +153,17 @@ def migrate_items_to_variations():
                     script_obj = data.get('script')
                     if isinstance(script_obj, str):
                         script_obj = json.loads(script_obj)
-                    items_catalog[iid]['variations'] = [{"name": "Padrão", "script": script_obj, "image_url": data.get('image_url', ''), "is_vehicle": data.get('is_vehicle', False), "insurance_drops": data.get('insurance_drops', 0)}]
+                    items_catalog[iid]['variations'] = [{"name": "Default", "script": script_obj, "image_url": data.get('image_url', ''), "is_vehicle": data.get('is_vehicle', False), "insurance_drops": data.get('insurance_drops', 0)}]
                     # remove legacy 'script' to avoid confusion
                     if 'script' in items_catalog[iid]:
                         del items_catalog[iid]['script']
                     migrated = True
                 except Exception as e:
-                    logger.error(f"Erro migrando item {iid}: {str(e)}")
+                    logger.error(f"Error migrating item {iid}: {str(e)}")
     if migrated:
         save_json(ITEMS_FILE, items_catalog)
-        logger.info("Migração para 'variations' executada e items_catalog salvo.")
-# Executar migração logo após definir a função
+        logger.info("Migration to 'variations' executed and items_catalog saved.")
+# Execute migration right after defining the function
 migrate_items_to_variations()
 
 # Bot
@@ -173,7 +173,7 @@ intents.message_content = True
 intents.guilds = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# Pagamento pendente
+# Pending payment
 pending_payments = {}  # payment_id -> {user_id, item_id, type, steam_target, insurance, amount, coupon}
 
 def validate_steam_id(steam_id: str) -> bool:
@@ -187,7 +187,7 @@ class FTPManager:
     @staticmethod
     def update_player_file(steam_id: str, item_name: str = None, item_list: list = None) -> bool:
         if not validate_steam_id(steam_id):
-            logger.error(f"Tentativa de atualizar arquivo com SteamID inválido: {steam_id}")
+            logger.error(f"Attempt to update file with invalid SteamID: {steam_id}")
             return False
         filename = f"{steam_id}.json"
         if USE_LOCAL:
@@ -204,7 +204,7 @@ class FTPManager:
                             existing_data = {}
                 else:
                     existing_data = {"itemToGive": "none", "itemsToGive": []}
-                # Evitar duplicação
+                # Avoid duplication
                 current_items = set(existing_data.get('itemsToGive', []))
                 if item_list:
                     new_items = [item for item in item_list if item not in current_items]
@@ -215,22 +215,22 @@ class FTPManager:
                     existing_data['itemToGive'] = "none"
                 with open(full_path, 'w', encoding='utf-8') as f:
                     json.dump(existing_data, f, indent=4, ensure_ascii=False)
-                logger.info(f"Arquivo {filename} atualizado em {full_path} para SteamID {steam_id}")
+                logger.info(f"File {filename} updated in {full_path} for SteamID {steam_id}")
                 return True
             except Exception as e:
-                logger.error(f"Erro ao salvar arquivo local {filename}: {str(e)}")
+                logger.error(f"Error saving local file {filename}: {str(e)}")
                 return False
         else:
-            logger.error("FTP não configurado (USE_LOCAL=false). Funcionalidade não implementada.")
+            logger.error("FTP not configured (USE_LOCAL=false). Functionality not implemented.")
             return False
 
     @staticmethod
     def update_banking_file(steam_id: str, amount: int = 100000) -> bool:
         if not validate_steam_id(steam_id):
-            logger.error(f"Tentativa de atualizar banking com SteamID inválido: {steam_id}")
+            logger.error(f"Attempt to update banking with invalid SteamID: {steam_id}")
             return False
         if not USE_LOCAL:
-            logger.error("Banking update só suportado em modo local (USE_LOCAL=true).")
+            logger.error("Banking update only supported in local mode (USE_LOCAL=true).")
             return False
         filename = f"{steam_id}.json"
         full_path = os.path.join(BANKING_PATH, filename)
@@ -244,14 +244,14 @@ class FTPManager:
                         data = json.load(f)
                     except:
                         data = {}
-            # Só atualiza m_OwnedCurrency, mantendo os outros campos
+            # Only update m_OwnedCurrency, keeping other fields
             data['m_OwnedCurrency'] = amount
             with open(full_path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=4, ensure_ascii=False)
-            logger.info(f"Saldo atualizado para {amount} em {full_path} para SteamID {steam_id}")
+            logger.info(f"Balance updated to {amount} in {full_path} for SteamID {steam_id}")
             return True
         except Exception as e:
-            logger.error(f"Erro ao atualizar banking {filename}: {str(e)}")
+            logger.error(f"Error updating banking {filename}: {str(e)}")
             return False
 
 # PayPal helpers
@@ -259,7 +259,7 @@ class PayPalPayment:
     @staticmethod
     async def create_payment(amount: float, description: str, user_id: int, item_id: str, item_type: str, steam_target: str, insurance: bool, coupon_code: str = None):
         if amount <= 0:
-            return {"status": "free", "message": "Item gratuito"}
+            return {"status": "free", "message": "Free item"}
         try:
             payment = paypalrestsdk.Payment({
                 "intent": "sale",
@@ -298,10 +298,10 @@ class PayPalPayment:
                 }
                 return {"status": "pending", "payment_id": payment_id, "approval_url": approval_url}
             else:
-                logger.error(f"Erro ao criar pagamento PayPal: {payment.error}")
+                logger.error(f"Error creating PayPal payment: {payment.error}")
                 return {"status": "error", "message": str(payment.error)}
         except Exception as e:
-            logger.error(f"Erro ao criar pagamento: {str(e)}")
+            logger.error(f"Error creating payment: {str(e)}")
             return {"status": "error", "message": str(e)}
 
     @staticmethod
@@ -315,21 +315,21 @@ class PayPalPayment:
             else:
                 return payment.state
         except Exception as e:
-            logger.error(f"Erro ao verificar status do pagamento {payment_id}: {str(e)}")
+            logger.error(f"Error checking payment status {payment_id}: {str(e)}")
             return "error"
 
-# Modals e Views
+# Modals and Views
 
 class DeleteItemModal(Modal):
     def __init__(self, item_id: str, item_name: str):
-        super().__init__(title=f"Deletar Item: {item_name}")
+        super().__init__(title=f"Delete Item: {item_name}")
         self.item_id = item_id
-        self.confirm = TextInput(label="Digite 'SIM' para confirmar a exclusão", required=True)
+        self.confirm = TextInput(label="Type 'YES' to confirm deletion", required=True)
         self.add_item(self.confirm)
 
     async def on_submit(self, interaction: discord.Interaction):
-        if self.confirm.value.strip().upper() != "SIM":
-            await interaction.response.send_message("Confirmação inválida. Digite 'SIM' para deletar.", ephemeral=True)
+        if self.confirm.value.strip().upper() != "YES":
+            await interaction.response.send_message("Invalid confirmation. Type 'YES' to delete.", ephemeral=True)
             return
         if self.item_id in items_catalog:
             del items_catalog[self.item_id]
@@ -341,38 +341,38 @@ class DeleteItemModal(Modal):
                     if message.author == bot.user and message.embeds and message.embeds[0].title == items_catalog.get(self.item_id, {}).get('name', ''):
                         await message.delete()
                         break
-            await interaction.response.send_message(f"✅ Item **{items_catalog.get(self.item_id, {}).get('name', '')}** deletado com sucesso.", ephemeral=True)
+            await interaction.response.send_message(f"✅ Item **{items_catalog.get(self.item_id, {}).get('name', '')}** deleted successfully.", ephemeral=True)
         else:
-            await interaction.response.send_message("Item não encontrado.", ephemeral=True)
+            await interaction.response.send_message("Item not found.", ephemeral=True)
 
 class DeleteCouponModal(Modal):
     def __init__(self, code: str):
-        super().__init__(title=f"Deletar Cupom: {code}")
+        super().__init__(title=f"Delete Coupon: {code}")
         self.code = code
-        self.confirm = TextInput(label="Digite 'SIM' para confirmar a exclusão", required=True)
+        self.confirm = TextInput(label="Type 'YES' to confirm deletion", required=True)
         self.add_item(self.confirm)
 
     async def on_submit(self, interaction: discord.Interaction):
-        if self.confirm.value.strip().upper() != "SIM":
-            await interaction.response.send_message("Confirmação inválida. Digite 'SIM' para deletar.", ephemeral=True)
+        if self.confirm.value.strip().upper() != "YES":
+            await interaction.response.send_message("Invalid confirmation. Type 'YES' to delete.", ephemeral=True)
             return
         if self.code in coupons:
             del coupons[self.code]
             save_json(COUPONS_FILE, coupons)
-            await interaction.response.send_message(f"✅ Cupom **{self.code}** deletado com sucesso.", ephemeral=True)
+            await interaction.response.send_message(f"✅ Coupon **{self.code}** deleted successfully.", ephemeral=True)
         else:
-            await interaction.response.send_message("Cupom não encontrado.", ephemeral=True)
+            await interaction.response.send_message("Coupon not found.", ephemeral=True)
 
 class DeletePassModal(Modal):
     def __init__(self, pass_id: str, pass_name: str):
-        super().__init__(title=f"Deletar Passe: {pass_name}")
+        super().__init__(title=f"Delete Pass: {pass_name}")
         self.pass_id = pass_id
-        self.confirm = TextInput(label="Digite 'SIM' para confirmar a exclusão", required=True)
+        self.confirm = TextInput(label="Type 'YES' to confirm deletion", required=True)
         self.add_item(self.confirm)
 
     async def on_submit(self, interaction: discord.Interaction):
-        if self.confirm.value.strip().upper() != "SIM":
-            await interaction.response.send_message("Confirmação inválida. Digite 'SIM' para deletar.", ephemeral=True)
+        if self.confirm.value.strip().upper() != "YES":
+            await interaction.response.send_message("Invalid confirmation. Type 'YES' to delete.", ephemeral=True)
             return
         if self.pass_id in passes_catalog:
             del passes_catalog[self.pass_id]
@@ -384,20 +384,20 @@ class DeletePassModal(Modal):
                     if message.author == bot.user and message.embeds and message.embeds[0].title == passes_catalog.get(self.pass_id, {}).get('name', ''):
                         await message.delete()
                         break
-            await interaction.response.send_message(f"✅ Passe **{passes_catalog.get(self.pass_id, {}).get('name', '')}** deletado com sucesso.", ephemeral=True)
+            await interaction.response.send_message(f"✅ Pass **{passes_catalog.get(self.pass_id, {}).get('name', '')}** deleted successfully.", ephemeral=True)
         else:
-            await interaction.response.send_message("Passe não encontrado.", ephemeral=True)
+            await interaction.response.send_message("Pass not found.", ephemeral=True)
 
 class DeleteSaldoModal(Modal):
     def __init__(self, item_id: str, item_name: str):
-        super().__init__(title=f"Deletar Saldo: {item_name}")
+        super().__init__(title=f"Delete Balance: {item_name}")
         self.item_id = item_id
-        self.confirm = TextInput(label="Digite 'SIM' para confirmar a exclusão", required=True)
+        self.confirm = TextInput(label="Type 'YES' to confirm deletion", required=True)
         self.add_item(self.confirm)
 
     async def on_submit(self, interaction: discord.Interaction):
-        if self.confirm.value.strip().upper() != "SIM":
-            await interaction.response.send_message("Confirmação inválida. Digite 'SIM' para deletar.", ephemeral=True)
+        if self.confirm.value.strip().upper() != "YES":
+            await interaction.response.send_message("Invalid confirmation. Type 'YES' to delete.", ephemeral=True)
             return
         if self.item_id in items_catalog:
             del items_catalog[self.item_id]
@@ -409,26 +409,26 @@ class DeleteSaldoModal(Modal):
                     if message.author == bot.user and message.embeds and message.embeds[0].title == items_catalog.get(self.item_id, {}).get('name', ''):
                         await message.delete()
                         break
-            await interaction.response.send_message(f"✅ Pacote de Saldo **{items_catalog.get(self.item_id, {}).get('name', '')}** deletado com sucesso.", ephemeral=True)
+            await interaction.response.send_message(f"✅ Balance Package **{items_catalog.get(self.item_id, {}).get('name', '')}** deleted successfully.", ephemeral=True)
         else:
-            await interaction.response.send_message("Pacote de Saldo não encontrado.", ephemeral=True)
+            await interaction.response.send_message("Balance Package not found.", ephemeral=True)
 
 class CreateItemModal(Modal):
     def __init__(self):
-        super().__init__(title="Criar Novo Item")
-        self.name = TextInput(label="Nome do Item", placeholder="Ex: Mochila", required=True)
+        super().__init__(title="Create New Item")
+        self.name = TextInput(label="Item Name", placeholder="Ex: Backpack", required=True)
         currency_label = '€' if PAYPAL_CURRENCY == 'EUR' else PAYPAL_CURRENCY
-        self.price = TextInput(label=f"Preço ({currency_label})", placeholder="Ex: 10.00", required=True)
-        self.image_url = TextInput(label="URL da Imagem (opcional)", placeholder="https://...", required=False)
+        self.price = TextInput(label=f"Price ({currency_label})", placeholder="Ex: 10.00", required=True)
+        self.image_url = TextInput(label="Image URL (optional)", placeholder="https://...", required=False)
         self.variations = TextInput(
-            label="Variações (JSON)",
-            placeholder='Ex: [{"name":"Preta","script":{"itemsToGive":["Item"], "banking": true}}]',
+            label="Variations (JSON)",
+            placeholder='Ex: [{"name":"Black","script":{"itemsToGive":["Item"], "banking": true}}]',
             style=discord.TextStyle.paragraph,
             required=True
         )
         self.vehicle_info = TextInput(
-            label="Veículo e Seguros (ex: s,3)",
-            placeholder="Ex: s,3 (veículo com 3 seguros) ou n,0 (sem veículo)",
+            label="Vehicle and Insurance (ex: y,3)",
+            placeholder="Ex: y,3 (vehicle with 3 insurance) or n,0 (no vehicle)",
             required=False,
             default="n,0"
         )
@@ -442,16 +442,16 @@ class CreateItemModal(Modal):
         try:
             price = float(self.price.value.replace(',', '.'))
             if price < 0:
-                await interaction.response.send_message("Preço não pode ser negativo.", ephemeral=True); return
+                await interaction.response.send_message("Price cannot be negative.", ephemeral=True); return
 
             variations_text = self.variations.value.strip()
             if not variations_text:
-                await interaction.response.send_message("O campo 'Variações (JSON)' é obrigatório.", ephemeral=True); return
+                await interaction.response.send_message("The 'Variations (JSON)' field is required.", ephemeral=True); return
             variations = json.loads(variations_text)
             # Validate each variation has name and script
             for v in variations:
                 if 'name' not in v or 'script' not in v:
-                    await interaction.response.send_message("Cada variação precisa de 'name' e 'script'.", ephemeral=True); return
+                    await interaction.response.send_message("Each variation needs 'name' and 'script'.", ephemeral=True); return
 
             vi = self.vehicle_info.value.strip().lower()
             is_vehicle = False
@@ -478,18 +478,18 @@ class CreateItemModal(Modal):
             items_catalog[item_id] = item_obj
             save_json(ITEMS_FILE, items_catalog)
             save_list_to_txt(ITEMS_LIST_TXT, items_catalog)
-            await interaction.response.send_message(f"✅ Item **{self.name.value}** criado com ID `{item_id}`.", ephemeral=True)
+            await interaction.response.send_message(f"✅ Item **{self.name.value}** created with ID `{item_id}`.", ephemeral=True)
         except Exception as e:
-            await interaction.response.send_message(f"Erro ao criar item: {str(e)}", ephemeral=True)
+            await interaction.response.send_message(f"Error creating item: {str(e)}", ephemeral=True)
 
 class EditItemModal(Modal):
     def __init__(self, item_id: str, item_data: dict):
-        super().__init__(title=f"Editar Item: {item_data.get('name', 'Item')}")
+        super().__init__(title=f"Edit Item: {item_data.get('name', 'Item')}")
         self.item_id = item_id
         self.name = TextInput(
-            label="Nome do Item",
+            label="Item Name",
             default=item_data.get('name', ''),
-            placeholder="Ex: Mochila",
+            placeholder="Ex: Backpack",
             required=True
         )
         self.price = TextInput(
@@ -499,23 +499,23 @@ class EditItemModal(Modal):
             required=True
         )
         self.image_url = TextInput(
-            label="URL da Imagem (opcional)",
+            label="Image URL (optional)",
             default=item_data.get('image_url', ''),
             placeholder="https://...",
             required=False
         )
         default_variations = json.dumps(item_data.get('variations', []), ensure_ascii=False)
         self.variations = TextInput(
-            label="Variações (JSON)",
-            placeholder='Ex: [{"name":"Preta","script":{"itemsToGive":["Item"], "banking": true}}]',
+            label="Variations (JSON)",
+            placeholder='Ex: [{"name":"Black","script":{"itemsToGive":["Item"], "banking": true}}]',
             default=default_variations,
             style=discord.TextStyle.paragraph,
             required=True
         )
         self.vehicle_info = TextInput(
-            label="Veículo e Seguros (ex: s,3)",
-            placeholder="Ex: s,3 (veículo com 3 seguros) ou n,0 (sem veículo)",
-            default=f"{'s' if item_data.get('is_vehicle', False) else 'n'},{item_data.get('insurance_drops', 0)}",
+            label="Vehicle and Insurance (ex: y,3)",
+            placeholder="Ex: y,3 (vehicle with 3 insurance) or n,0 (no vehicle)",
+            default=f"{'y' if item_data.get('is_vehicle', False) else 'n'},{item_data.get('insurance_drops', 0)}",
             required=False
         )
         self.add_item(self.name)
@@ -528,13 +528,13 @@ class EditItemModal(Modal):
         try:
             price = float(self.price.value.replace(',', '.'))
             if price < 0:
-                await interaction.response.send_message("Preço não pode ser negativo.", ephemeral=True)
+                await interaction.response.send_message("Price cannot be negative.", ephemeral=True)
                 return
 
             variations = json.loads(self.variations.value)
             for v in variations:
                 if 'name' not in v or 'script' not in v:
-                    await interaction.response.send_message("Cada variação precisa de 'name' e 'script'.", ephemeral=True); return
+                    await interaction.response.send_message("Each variation needs 'name' and 'script'.", ephemeral=True); return
 
             vi = self.vehicle_info.value.strip().lower()
             is_vehicle = False
@@ -576,16 +576,16 @@ class EditItemModal(Modal):
                         view = ItemViewForChannel(self.item_id, items_catalog[self.item_id])
                         await message.edit(embed=embed, view=view)
                         break
-            await interaction.response.send_message(f"✅ Item **{self.name.value}** atualizado com sucesso.", ephemeral=True)
+            await interaction.response.send_message(f"✅ Item **{self.name.value}** updated successfully.", ephemeral=True)
         except Exception as e:
-            await interaction.response.send_message(f"Erro ao editar item: {str(e)}", ephemeral=True)
+            await interaction.response.send_message(f"Error editing item: {str(e)}", ephemeral=True)
 
 class CreateCouponModal(Modal):
     def __init__(self):
-        super().__init__(title="Criar Cupom")
-        self.code = TextInput(label="Código (ex: DESCONTO10)", required=True)
-        self.discount = TextInput(label="Desconto (%)", placeholder="10", required=True)
-        self.uses = TextInput(label="Usos (-1 para ilimitado)", placeholder="5", required=True)
+        super().__init__(title="Create Coupon")
+        self.code = TextInput(label="Code (ex: DISCOUNT10)", required=True)
+        self.discount = TextInput(label="Discount (%)", placeholder="10", required=True)
+        self.uses = TextInput(label="Uses (-1 for unlimited)", placeholder="5", required=True)
         self.add_item(self.code)
         self.add_item(self.discount)
         self.add_item(self.uses)
@@ -596,21 +596,21 @@ class CreateCouponModal(Modal):
             discount = float(self.discount.value.replace(',', '.'))
             uses = int(self.uses.value)
             if code in coupons:
-                await interaction.response.send_message("Código já existe.", ephemeral=True); return
+                await interaction.response.send_message("Code already exists.", ephemeral=True); return
             if discount < 0 or discount > 100:
-                await interaction.response.send_message("Desconto inválido.", ephemeral=True); return
+                await interaction.response.send_message("Invalid discount.", ephemeral=True); return
             coupons[code] = {"discount": discount, "uses": uses}
             save_json(COUPONS_FILE, coupons)
-            await interaction.response.send_message(f"✅ Cupom {code} criado.", ephemeral=True)
+            await interaction.response.send_message(f"✅ Coupon {code} created.", ephemeral=True)
         except Exception as e:
-            await interaction.response.send_message(f"Erro: {str(e)}", ephemeral=True)
+            await interaction.response.send_message(f"Error: {str(e)}", ephemeral=True)
 
 class EditCouponModal(Modal):
     def __init__(self, code: str, data: dict):
-        super().__init__(title=f"Editar Cupom: {code}")
+        super().__init__(title=f"Edit Coupon: {code}")
         self.code = code
-        self.discount = TextInput(label="Desconto (%)", default=str(data.get('discount',0)).replace('.',','), required=True)
-        self.uses = TextInput(label="Usos (-1 para ilimitado)", default=str(data.get('uses',0)), required=True)
+        self.discount = TextInput(label="Discount (%)", default=str(data.get('discount',0)).replace('.',','), required=True)
+        self.uses = TextInput(label="Uses (-1 for unlimited)", default=str(data.get('uses',0)), required=True)
         self.add_item(self.discount)
         self.add_item(self.uses)
 
@@ -619,12 +619,12 @@ class EditCouponModal(Modal):
             discount = float(self.discount.value.replace(',', '.'))
             uses = int(self.uses.value)
             if discount < 0 or discount > 100:
-                await interaction.response.send_message("Desconto inválido.", ephemeral=True); return
+                await interaction.response.send_message("Invalid discount.", ephemeral=True); return
             coupons[self.code] = {"discount": discount, "uses": uses}
             save_json(COUPONS_FILE, coupons)
-            await interaction.response.send_message(f"✅ Cupom {self.code} atualizado.", ephemeral=True)
+            await interaction.response.send_message(f"✅ Coupon {self.code} updated.", ephemeral=True)
         except Exception as e:
-            await interaction.response.send_message(f"Erro: {str(e)}", ephemeral=True)
+            await interaction.response.send_message(f"Error: {str(e)}", ephemeral=True)
 
 class CouponSelectView(View):
     def __init__(self):
@@ -634,18 +634,18 @@ class CouponSelectView(View):
     async def on_timeout(self):
         if self.message:
             try:
-                await self.message.edit(content="⏳ Seleção de cupom expirada.", view=None)
+                await self.message.edit(content="⏳ Coupon selection expired.", view=None)
             except:
                 pass
 
     @discord.ui.select(
-        placeholder="Escolha um cupom para editar...",
-        options=[discord.SelectOption(label=f"{code} — {data.get('discount',0)}% ({'ilimitado' if data.get('uses',0)==-1 else data.get('uses',0)} usos)", value=code)
-                 for code, data in coupons.items()] or [discord.SelectOption(label="Nenhum cupom disponível", value="none")]
+        placeholder="Choose a coupon to edit...",
+        options=[discord.SelectOption(label=f"{code} — {data.get('discount',0)}% ({'unlimited' if data.get('uses',0)==-1 else data.get('uses',0)} uses)", value=code)
+                 for code, data in coupons.items()] or [discord.SelectOption(label="No coupons available", value="none")]
     )
     async def select_coupon(self, interaction: discord.Interaction, select: discord.ui.Select):
         if select.values[0] == "none":
-            await interaction.response.send_message("Nenhum cupom disponível.", ephemeral=True)
+            await interaction.response.send_message("No coupons available.", ephemeral=True)
             return
         code = select.values[0]
         data = coupons.get(code, {})
@@ -653,10 +653,10 @@ class CouponSelectView(View):
 
 class CreatePassModal(Modal):
     def __init__(self):
-        super().__init__(title="Criar Passe")
-        self.name = TextInput(label="Nome do Passe", required=True)
-        self.price = TextInput(label=f"Preço ({'€' if PAYPAL_CURRENCY=='EUR' else PAYPAL_CURRENCY})", required=True)
-        self.image_url = TextInput(label="URL da imagem (opcional)", required=False)
+        super().__init__(title="Create Pass")
+        self.name = TextInput(label="Pass Name", required=True)
+        self.price = TextInput(label=f"Price ({'€' if PAYPAL_CURRENCY=='EUR' else PAYPAL_CURRENCY})", required=True)
+        self.image_url = TextInput(label="Image URL (optional)", required=False)
         self.script = TextInput(label="Script JSON", style=discord.TextStyle.paragraph, required=True)
         self.add_item(self.name)
         self.add_item(self.price)
@@ -676,17 +676,17 @@ class CreatePassModal(Modal):
             }
             save_json(PASSES_FILE, passes_catalog)
             save_list_to_txt(PASSES_LIST_TXT, passes_catalog)
-            await interaction.response.send_message(f"✅ Passe {self.name.value} criado ({pass_id}).", ephemeral=True)
+            await interaction.response.send_message(f"✅ Pass {self.name.value} created ({pass_id}).", ephemeral=True)
         except Exception as e:
-            await interaction.response.send_message(f"Erro: {str(e)}", ephemeral=True)
+            await interaction.response.send_message(f"Error: {str(e)}", ephemeral=True)
 
 class CreateSaldoModal(Modal):
     def __init__(self):
-        super().__init__(title="Criar Pacote de Saldo")
-        self.name = TextInput(label="Nome do Pacote", placeholder="Ex: 50K Saldo", required=True)
-        self.price = TextInput(label=f"Preço ({'€' if PAYPAL_CURRENCY=='EUR' else PAYPAL_CURRENCY})", placeholder="Ex: 30.00", required=True)
-        self.currency_amount = TextInput(label="Valor do Saldo", placeholder="Ex: 50000", required=True)
-        self.image_url = TextInput(label="URL da Imagem (opcional)", placeholder="https://...", required=False)
+        super().__init__(title="Create Balance Package")
+        self.name = TextInput(label="Package Name", placeholder="Ex: 50K Balance", required=True)
+        self.price = TextInput(label=f"Price ({'€' if PAYPAL_CURRENCY=='EUR' else PAYPAL_CURRENCY})", placeholder="Ex: 30.00", required=True)
+        self.currency_amount = TextInput(label="Balance Amount", placeholder="Ex: 50000", required=True)
+        self.image_url = TextInput(label="Image URL (optional)", placeholder="https://...", required=False)
         self.add_item(self.name)
         self.add_item(self.price)
         self.add_item(self.currency_amount)
@@ -696,11 +696,11 @@ class CreateSaldoModal(Modal):
         try:
             price = float(self.price.value.replace(',', '.'))
             if price < 0:
-                await interaction.response.send_message("Preço não pode ser negativo.", ephemeral=True); return
+                await interaction.response.send_message("Price cannot be negative.", ephemeral=True); return
 
             amount = int(self.currency_amount.value)
             if amount <= 0:
-                await interaction.response.send_message("Valor do saldo deve ser positivo.", ephemeral=True); return
+                await interaction.response.send_message("Balance amount must be positive.", ephemeral=True); return
 
             item_id = generate_unique_id("saldo")
             item_obj = {
@@ -711,7 +711,7 @@ class CreateSaldoModal(Modal):
                 "insurance_drops": 0,
                 "variations": [
                     {
-                        "name": "Padrão",
+                        "name": "Default",
                         "script": {
                             "itemsToGive": [],
                             "banking": True,
@@ -726,33 +726,33 @@ class CreateSaldoModal(Modal):
             items_catalog[item_id] = item_obj
             save_json(ITEMS_FILE, items_catalog)
             save_list_to_txt(ITEMS_LIST_TXT, items_catalog)
-            await interaction.response.send_message(f"✅ Pacote de Saldo **{self.name.value}** criado com ID `{item_id}`.", ephemeral=True)
+            await interaction.response.send_message(f"✅ Balance Package **{self.name.value}** created with ID `{item_id}`.", ephemeral=True)
         except Exception as e:
-            await interaction.response.send_message(f"Erro ao criar pacote de saldo: {str(e)}", ephemeral=True)
+            await interaction.response.send_message(f"Error creating balance package: {str(e)}", ephemeral=True)
 
 class VincularSteamModal(Modal):
     def __init__(self):
-        super().__init__(title="Vincular SteamID (seguro)")
-        self.steam_id = TextInput(label="SteamID64 (17 dígitos)", required=True)
+        super().__init__(title="Link SteamID (insurance)")
+        self.steam_id = TextInput(label="SteamID64 (17 digits)", required=True)
         self.add_item(self.steam_id)
 
     async def on_submit(self, interaction: discord.Interaction):
         steam = self.steam_id.value.strip()
         if not validate_steam_id(steam):
-            await interaction.response.send_message("SteamID inválido.", ephemeral=True); return
+            await interaction.response.send_message("Invalid SteamID.", ephemeral=True); return
         user_data[str(interaction.user.id)] = steam
         save_json(USER_DATA_FILE, user_data)
-        await interaction.response.send_message("✅ SteamID vinculado (usado para seguros).", ephemeral=True)
+        await interaction.response.send_message("✅ SteamID linked (used for insurance).", ephemeral=True)
 
 class PurchaseSteamModal(Modal):
     def __init__(self, item_id: str, item_type: str, item_data: dict, variation_index: int = 0):
-        title = "Informar SteamID para entrega"
+        title = "Enter SteamID for delivery"
         super().__init__(title=title)
         self.item_id = item_id
         self.item_type = item_type
         self.item_data = item_data
         self.variation_index = variation_index
-        self.steam_id = TextInput(label="SteamID64 (destino)", required=True)
+        self.steam_id = TextInput(label="SteamID64 (destination)", required=True)
         # Determine if insurance should be prompted: check variation or item flags
         variation = None
         if item_data.get('variations'):
@@ -769,16 +769,16 @@ class PurchaseSteamModal(Modal):
             is_vehicle = item_data.get('is_vehicle', False)
         # Only show insurance choice if vehicle and drops > 0
         if is_vehicle and drops > 0:
-            self.insurance_choice = TextInput(label="Deseja seguro? (s/n)", default="n", required=False)
+            self.insurance_choice = TextInput(label="Want insurance? (y/n)", default="n", required=False)
             self.add_item(self.insurance_choice)
         else:
             # keep a hidden field by not adding; we'll assume default False later
             self.insurance_choice = None
 
         self.coupon_code = TextInput(
-            label="Código do cupom (opcional)",
+            label="Coupon code (optional)",
             required=False,
-            placeholder="Ex: DESCONTO10"
+            placeholder="Ex: DISCOUNT10"
         )
         self.add_item(self.steam_id)
         self.add_item(self.coupon_code)
@@ -786,8 +786,8 @@ class PurchaseSteamModal(Modal):
     async def on_submit(self, interaction: discord.Interaction):
         steam_target = self.steam_id.value.strip()
         if not validate_steam_id(steam_target):
-            logger.error(f"SteamID inválido fornecido: {steam_target}")
-            await interaction.response.send_message("SteamID inválido.", ephemeral=True)
+            logger.error(f"Invalid SteamID provided: {steam_target}")
+            await interaction.response.send_message("Invalid SteamID.", ephemeral=True)
             return
         insurance_choice = False
         if self.insurance_choice:
@@ -798,15 +798,15 @@ class PurchaseSteamModal(Modal):
         final_price = original_price
         applied_coupon = None
 
-        # Validar e aplicar cupom
+        # Validate and apply coupon
         if coupon_code:
             if coupon_code not in coupons:
-                logger.error(f"Cupom inválido: {coupon_code}")
-                await interaction.response.send_message("Cupom inválido.", ephemeral=True)
+                logger.error(f"Invalid coupon: {coupon_code}")
+                await interaction.response.send_message("Invalid coupon.", ephemeral=True)
                 return
             if coupons[coupon_code]['uses'] == 0:
-                logger.error(f"Cupom {coupon_code} sem usos disponíveis")
-                await interaction.response.send_message("Cupom sem usos disponíveis.", ephemeral=True)
+                logger.error(f"Coupon {coupon_code} has no uses available")
+                await interaction.response.send_message("Coupon has no uses available.", ephemeral=True)
                 return
             discount = coupons[coupon_code]['discount']
             final_price = max(0.0, original_price * (1 - discount / 100))
@@ -821,7 +821,7 @@ class PurchaseSteamModal(Modal):
         except Exception:
             override_script = None
 
-        # Se o preço final for 0 -> entrega imediata
+        # If final price is 0 -> immediate delivery
         if final_price == 0.0:
             success = await process_approved_payment(
                 None,
@@ -856,15 +856,15 @@ class PurchaseSteamModal(Modal):
                         "drops": drops
                     }
                     save_json(COMPRAS_FILE, compras)
-                await interaction.response.send_message("✅ Item gratuito entregue com sucesso! Use o canal de seguros para acionar.", ephemeral=True)
+                await interaction.response.send_message("✅ Free item delivered successfully! Use the insurance channel to activate.", ephemeral=True)
             else:
-                await interaction.response.send_message("Erro ao entregar item gratuito.", ephemeral=True)
+                await interaction.response.send_message("Error delivering free item.", ephemeral=True)
             return
 
-        # Criar pagamento para itens não gratuitos
+        # Create payment for non-free items
         payment_result = await PayPalPayment.create_payment(
             amount=final_price,
-            description=f"Compra: {self.item_data.get('name')} - User: {interaction.user.id}" + (f" (Cupom: {applied_coupon})" if applied_coupon else ""),
+            description=f"Purchase: {self.item_data.get('name')} - User: {interaction.user.id}" + (f" (Coupon: {applied_coupon})" if applied_coupon else ""),
             user_id=interaction.user.id,
             item_id=self.item_id,
             item_type=self.item_type,
@@ -874,31 +874,31 @@ class PurchaseSteamModal(Modal):
         )
         sales_channel = bot.get_channel(SALES_CHANNEL_ID)
         if not sales_channel:
-            logger.error("Canal de vendas não encontrado")
-            await interaction.response.send_message("Canal de vendas não encontrado.", ephemeral=True)
+            logger.error("Sales channel not found")
+            await interaction.response.send_message("Sales channel not found.", ephemeral=True)
             return
         try:
             thread = await sales_channel.create_thread(
-                name=f"Compra de {self.item_data.get('name')} - {interaction.user.name}",
+                name=f"Purchase of {self.item_data.get('name')} - {interaction.user.name}",
                 type=discord.ChannelType.private_thread,
                 auto_archive_duration=60,
                 invitable=False
             )
             await thread.add_user(interaction.user)
         except Exception as e:
-            logger.error(f"Erro criar thread: {str(e)}")
-            await interaction.response.send_message("Erro ao criar thread.", ephemeral=True)
+            logger.error(f"Error creating thread: {str(e)}")
+            await interaction.response.send_message("Error creating thread.", ephemeral=True)
             return
 
         if payment_result["status"] == "pending":
             payment_id = payment_result["payment_id"]
             approval_url = payment_result["approval_url"]
             embed = discord.Embed(
-                title="💳 Pague com PayPal para Concluir",
-                description=f"Pedido para **{self.item_data.get('name')}** criado.\nValor: {'€' if PAYPAL_CURRENCY=='EUR' else PAYPAL_CURRENCY + ' '}{final_price:.2f}" + (f" (Cupom: {applied_coupon})" if applied_coupon else "") + f"\n\n[Clique aqui para pagar com PayPal]({approval_url})\n\nApós o pagamento, clique no botão 'Verificar Pagamento'.",
+                title="💳 Pay with PayPal to Complete",
+                description=f"Order for **{self.item_data.get('name')}** created.\nAmount: {'€' if PAYPAL_CURRENCY=='EUR' else PAYPAL_CURRENCY + ' '}{final_price:.2f}" + (f" (Coupon: {applied_coupon})" if applied_coupon else "") + f"\n\n[Click here to pay with PayPal]({approval_url})\n\nAfter payment, click the 'Check Payment' button.",
                 color=discord.Color.blue()
             )
-            embed.set_footer(text=f"ID do Pagamento: {payment_id}")
+            embed.set_footer(text=f"Payment ID: {payment_id}")
 
             class ThreadPaymentView(View):
                 def __init__(self, thread_obj, payment_id, steam_target, item_id, item_type, item_data, insurance_choice, variation_index, override_script):
@@ -913,14 +913,14 @@ class PurchaseSteamModal(Modal):
                     self.variation_index = variation_index
                     self.override_script = override_script
 
-                @discord.ui.button(label="🔁 Verificar Pagamento", style=discord.ButtonStyle.primary)
+                @discord.ui.button(label="🔁 Check Payment", style=discord.ButtonStyle.primary)
                 async def check_payment(self, interaction: discord.Interaction, button: Button):
                     status = await PayPalPayment.check_payment_status(self.payment_id)
                     if status == "approved":
                         info = pending_payments.get(self.payment_id)
                         if not info:
-                            logger.error(f"Pagamento {self.payment_id} não encontrado em pending_payments")
-                            await interaction.response.send_message("Pagamento não encontrado (reinício do bot?).", ephemeral=True)
+                            logger.error(f"Payment {self.payment_id} not found in pending_payments")
+                            await interaction.response.send_message("Payment not found (bot restart?).", ephemeral=True)
                             return
                         success = await process_approved_payment(
                             interaction,
@@ -959,33 +959,33 @@ class PurchaseSteamModal(Modal):
                                     "drops": drops
                                 }
                                 save_json(COMPRAS_FILE, compras)
-                                logger.info(f"Compra registrada: {compra_id} para user {interaction.user.id}, SteamID {self.steam_target}")
-                            await interaction.response.send_message("✅ Pagamento aprovado e item entregue! Use o canal de seguros para acionar.", ephemeral=True)
+                                logger.info(f"Purchase registered: {compra_id} for user {interaction.user.id}, SteamID {self.steam_target}")
+                            await interaction.response.send_message("✅ Payment approved and item delivered! Use the insurance channel to activate.", ephemeral=True)
                         else:
-                            logger.error(f"Falha ao processar entrega para pagamento {self.payment_id}")
-                            await interaction.response.send_message("❌ Erro ao processar entrega.", ephemeral=True)
+                            logger.error(f"Failed to process delivery for payment {self.payment_id}")
+                            await interaction.response.send_message("❌ Error processing delivery.", ephemeral=True)
                     elif status in ("pending", "in_process"):
-                        await interaction.response.send_message(f"ℹ️ Pagamento ainda pendente ({status}).", ephemeral=True)
+                        await interaction.response.send_message(f"ℹ️ Payment still pending ({status}).", ephemeral=True)
                     else:
-                        logger.error(f"Status de pagamento inválido: {status} para pagamento {self.payment_id}")
+                        logger.error(f"Invalid payment status: {status} for payment {self.payment_id}")
                         await interaction.response.send_message(f"❌ Status: {status}.", ephemeral=True)
 
-                @discord.ui.button(label="✅ Confirmar Recebimento", style=discord.ButtonStyle.success)
+                @discord.ui.button(label="✅ Confirm Receipt", style=discord.ButtonStyle.success)
                 async def confirm_receipt(self, interaction: discord.Interaction, button: Button):
-                    await interaction.response.send_message("Thread será encerrada.", ephemeral=True)
+                    await interaction.response.send_message("Thread will be closed.", ephemeral=True)
                     try:
                         await self.thread.delete()
                     except Exception as e:
                         logger.error(f"Erro ao deletar thread: {str(e)}")
 
-                @discord.ui.button(label="❌ Cancelar Compra", style=discord.ButtonStyle.danger)
+                @discord.ui.button(label="❌ Cancel Purchase", style=discord.ButtonStyle.danger)
                 async def cancel_purchase(self, interaction: discord.Interaction, button: Button):
                     try:
                         if self.payment_id in pending_payments:
                             del pending_payments[self.payment_id]
                     except:
                         pass
-                    await interaction.response.send_message("Compra cancelada. Thread será encerrada.", ephemeral=True)
+                    await interaction.response.send_message("Purchase canceled. Thread will be closed.", ephemeral=True)
                     try:
                         await self.thread.delete()
                     except Exception as e:
@@ -995,11 +995,11 @@ class PurchaseSteamModal(Modal):
             try:
                 await thread.send(embed=embed, view=view_thread)
             except Exception as e:
-                logger.error(f"Erro ao enviar mensagem na thread: {str(e)}")
-                await interaction.response.send_message("Erro ao enviar mensagem na thread.", ephemeral=True)
+                logger.error(f"Error sending message in thread: {str(e)}")
+                await interaction.response.send_message("Error sending message in thread.", ephemeral=True)
                 return
 
-            # Registrar seguro temporariamente (apenas aviso na thread)
+            # Register insurance temporarily (only warning in thread)
             if insurance_choice:
                 is_vehicle = False
                 drops = 0
@@ -1013,39 +1013,39 @@ class PurchaseSteamModal(Modal):
                 if is_vehicle and drops > 0:
                     seguros[steam_target] = seguros.get(steam_target, 0) + drops
                     save_json(SEGUROS_FILE, seguros)
-                    await thread.send(f"✅ Seguro contratado! Foram adicionados {drops} seguros para o SteamID `{steam_target}`. Use o canal de seguros para acionar.")
+                    await thread.send(f"✅ Insurance contracted! {drops} insurance(s) added for SteamID `{steam_target}`. Use the insurance channel to activate.")
 
-            await interaction.response.send_message(f"✅ Pedido criado. Verifique a thread: {thread.name}", ephemeral=True)
+            await interaction.response.send_message(f"✅ Order created. Check the thread: {thread.name}", ephemeral=True)
         else:
-            logger.error(f"Erro ao criar pagamento: {payment_result.get('message')}")
-            await interaction.response.send_message(f"Erro ao criar pagamento: {payment_result.get('message')}", ephemeral=True)
+            logger.error(f"Error creating payment: {payment_result.get('message')}")
+            await interaction.response.send_message(f"Error creating payment: {payment_result.get('message')}", ephemeral=True)
 
-# NOVO: View para o canal de seguros
+# NEW: View for insurance channel
 class SegurosView(View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="🚗 Acionar Seguro", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="🚗 Activate Insurance", style=discord.ButtonStyle.secondary)
     async def acionar_seguro(self, interaction: discord.Interaction, button: Button):
         class AcionarSeguroModal(Modal):
             def __init__(self):
-                super().__init__(title="Acionar Seguro - Informe SteamID")
-                self.steam = TextInput(label="SteamID64", placeholder="SteamID para receber veículo", required=True)
+                super().__init__(title="Activate Insurance - Enter SteamID")
+                self.steam = TextInput(label="SteamID64", placeholder="SteamID to receive vehicle", required=True)
                 self.add_item(self.steam)
 
             async def on_submit(self, interaction2: discord.Interaction):
                 steam = self.steam.value.strip()
-                logger.info(f"Tentativa de acionar seguro para SteamID {steam} por {interaction2.user.id}")
+                logger.info(f"Attempt to activate insurance for SteamID {steam} by {interaction2.user.id}")
                 if not validate_steam_id(steam):
-                    logger.error(f"SteamID inválido fornecido: {steam}")
-                    await interaction2.response.send_message("SteamID inválido.", ephemeral=True)
+                    logger.error(f"Invalid SteamID provided: {steam}")
+                    await interaction2.response.send_message("Invalid SteamID.", ephemeral=True)
                     return
                 qtd = seguros.get(steam, 0)
                 if qtd <= 0:
-                    logger.error(f"Nenhum seguro disponível para SteamID {steam}")
-                    await interaction2.response.send_message("Nenhum seguro disponível para este SteamID.", ephemeral=True)
+                    logger.error(f"No insurance available for SteamID {steam}")
+                    await interaction2.response.send_message("No insurance available for this SteamID.", ephemeral=True)
                     return
-                # NOVO: Verificar se o usuário é o comprador
+                # NEW: Verify if user is the buyer
                 user_id = str(interaction2.user.id)
                 compra_id = None
                 item_data = None
@@ -1055,29 +1055,29 @@ class SegurosView(View):
                         item_data = items_catalog.get(compra["item_id"], {})
                         break
                 if not item_data or not item_data.get("is_vehicle", False):
-                    logger.error(f"Usuário {user_id} não é o comprador ou item não é veículo para SteamID {steam}")
-                    await interaction2.response.send_message("Você não é o comprador deste seguro ou o item não é um veículo.", ephemeral=True)
+                    logger.error(f"User {user_id} is not the buyer or item is not a vehicle for SteamID {steam}")
+                    await interaction2.response.send_message("You are not the buyer of this insurance or the item is not a vehicle.", ephemeral=True)
                     return
                 try:
                     script_data = json.loads(item_data.get('script', '{}'))
-                    logger.info(f"Script JSON carregado para item {item_data.get('name')}: {script_data}")
+                    logger.info(f"JSON script loaded for item {item_data.get('name')}: {script_data}")
                 except Exception as e:
-                    logger.error(f"Erro ao parsear script JSON: {str(e)}")
-                    await interaction2.response.send_message("Script inválido do item.", ephemeral=True)
+                    logger.error(f"Error parsing JSON script: {str(e)}")
+                    await interaction2.response.send_message("Invalid item script.", ephemeral=True)
                     return
                 success = FTPManager.update_player_file(steam, item_list=script_data.get('itemsToGive', []) or None, item_name=script_data.get('itemToGive'))
                 if success:
                     seguros[steam] = max(0, seguros.get(steam, 0) - 1)
                     save_json(SEGUROS_FILE, seguros)
-                    compras[compra_id]["drops"] = max(0, compras[compra_id]["drops"] - 1)  # NOVO: Reduzir drops na compra
+                    compras[compra_id]["drops"] = max(0, compras[compra_id]["drops"] - 1)  # NEW: Reduce drops in purchase
                     save_json(COMPRAS_FILE, compras)
-                    logger.info(f"Seguro acionado com sucesso para SteamID {steam}. Seguros restantes: {seguros.get(steam, 0)}")
+                    logger.info(f"Insurance activated successfully for SteamID {steam}. Remaining insurance: {seguros.get(steam, 0)}")
                     with open(SEGUROS_LOG, 'a', encoding='utf-8') as f:
-                        f.write(f"{datetime.now().isoformat()} - Seguro acionado por {interaction2.user.id} para SteamID {steam} - Item {item_data.get('name')}\n")
-                    await interaction2.response.send_message("✅ Seguro acionado. Veículo dropado.", ephemeral=True)
+                        f.write(f"{datetime.now().isoformat()} - Insurance activated by {interaction2.user.id} for SteamID {steam} - Item {item_data.get('name')}\n")
+                    await interaction2.response.send_message("✅ Insurance activated. Vehicle dropped.", ephemeral=True)
                 else:
-                    logger.error(f"Falha ao dropar veículo para SteamID {steam}")
-                    await interaction2.response.send_message("Erro ao dropar veículo.", ephemeral=True)
+                    logger.error(f"Failed to drop vehicle for SteamID {steam}")
+                    await interaction2.response.send_message("Error dropping vehicle.", ephemeral=True)
         modal = AcionarSeguroModal()
         await interaction.response.send_modal(modal)
 
@@ -1089,23 +1089,23 @@ class ItemSelectView(View):
     async def on_timeout(self):
         if self.message:
             try:
-                await self.message.edit(content="⏳ Seleção de item expirada.", view=None)
+                await self.message.edit(content="⏳ Item selection expired.", view=None)
             except:
                 pass
 
     @discord.ui.select(
-        placeholder="Escolha um item para editar...",
-        options=[discord.SelectOption(label=data.get('name', 'Item Desconhecido'), value=item_id)
-                 for item_id, data in items_catalog.items()] or [discord.SelectOption(label="Nenhum item disponível", value="none")]
+        placeholder="Choose an item to edit...",
+        options=[discord.SelectOption(label=data.get('name', 'Unknown Item'), value=item_id)
+                 for item_id, data in items_catalog.items()] or [discord.SelectOption(label="No items available", value="none")]
     )
     async def select_item(self, interaction: discord.Interaction, select: discord.ui.Select):
         if select.values[0] == "none":
-            await interaction.response.send_message("Nenhum item disponível para edição.", ephemeral=True)
+            await interaction.response.send_message("No items available for editing.", ephemeral=True)
             return
         item_id = select.values[0]
         item_data = items_catalog.get(item_id, {})
         if not item_data:
-            await interaction.response.send_message("Item não encontrado.", ephemeral=True)
+            await interaction.response.send_message("Item not found.", ephemeral=True)
             return
         await interaction.response.send_modal(EditItemModal(item_id, item_data))
 
@@ -1117,23 +1117,23 @@ class ItemDeleteSelectView(View):
     async def on_timeout(self):
         if self.message:
             try:
-                await self.message.edit(content="⏳ Seleção de item expirada.", view=None)
+                await self.message.edit(content="⏳ Item selection expired.", view=None)
             except:
                 pass
 
     @discord.ui.select(
-        placeholder="Escolha um item para deletar...",
-        options=[discord.SelectOption(label=data.get('name', 'Item Desconhecido'), value=item_id)
-                 for item_id, data in items_catalog.items()] or [discord.SelectOption(label="Nenhum item disponível", value="none")]
+        placeholder="Choose an item to delete...",
+        options=[discord.SelectOption(label=data.get('name', 'Unknown Item'), value=item_id)
+                 for item_id, data in items_catalog.items()] or [discord.SelectOption(label="No items available", value="none")]
     )
     async def select_item(self, interaction: discord.Interaction, select: discord.ui.Select):
         if select.values[0] == "none":
-            await interaction.response.send_message("Nenhum item disponível para deleção.", ephemeral=True)
+            await interaction.response.send_message("No items available for deletion.", ephemeral=True)
             return
         item_id = select.values[0]
         item_data = items_catalog.get(item_id, {})
         if not item_data:
-            await interaction.response.send_message("Item não encontrado.", ephemeral=True)
+            await interaction.response.send_message("Item not found.", ephemeral=True)
             return
         await interaction.response.send_modal(DeleteItemModal(item_id, item_data.get('name', '')))
 
@@ -1145,18 +1145,18 @@ class CouponDeleteSelectView(View):
     async def on_timeout(self):
         if self.message:
             try:
-                await self.message.edit(content="⏳ Seleção de cupom expirada.", view=None)
+                await self.message.edit(content="⏳ Coupon selection expired.", view=None)
             except:
                 pass
 
     @discord.ui.select(
-        placeholder="Escolha um cupom para deletar...",
+        placeholder="Choose a coupon to delete...",
         options=[discord.SelectOption(label=code, value=code)
-                 for code in coupons.keys()] or [discord.SelectOption(label="Nenhum cupom disponível", value="none")]
+                 for code in coupons.keys()] or [discord.SelectOption(label="No coupons available", value="none")]
     )
     async def select_coupon(self, interaction: discord.Interaction, select: discord.ui.Select):
         if select.values[0] == "none":
-            await interaction.response.send_message("Nenhum cupom disponível para deleção.", ephemeral=True)
+            await interaction.response.send_message("No coupons available for deletion.", ephemeral=True)
             return
         code = select.values[0]
         await interaction.response.send_modal(DeleteCouponModal(code))
@@ -1169,23 +1169,23 @@ class PassDeleteSelectView(View):
     async def on_timeout(self):
         if self.message:
             try:
-                await self.message.edit(content="⏳ Seleção de passe expirada.", view=None)
+                await self.message.edit(content="⏳ Pass selection expired.", view=None)
             except:
                 pass
 
     @discord.ui.select(
-        placeholder="Escolha um passe para deletar...",
-        options=[discord.SelectOption(label=data.get('name', 'Passe Desconhecido'), value=pass_id)
-                 for pass_id, data in passes_catalog.items()] or [discord.SelectOption(label="Nenhum passe disponível", value="none")]
+        placeholder="Choose a pass to delete...",
+        options=[discord.SelectOption(label=data.get('name', 'Unknown Pass'), value=pass_id)
+                 for pass_id, data in passes_catalog.items()] or [discord.SelectOption(label="No passes available", value="none")]
     )
     async def select_pass(self, interaction: discord.Interaction, select: discord.ui.Select):
         if select.values[0] == "none":
-            await interaction.response.send_message("Nenhum passe disponível para deleção.", ephemeral=True)
+            await interaction.response.send_message("No passes available for deletion.", ephemeral=True)
             return
         pass_id = select.values[0]
         pass_data = passes_catalog.get(pass_id, {})
         if not pass_data:
-            await interaction.response.send_message("Passe não encontrado.", ephemeral=True)
+            await interaction.response.send_message("Pass not found.", ephemeral=True)
             return
         await interaction.response.send_modal(DeletePassModal(pass_id, pass_data.get('name', '')))
 
@@ -1197,24 +1197,24 @@ class SaldoDeleteSelectView(View):
     async def on_timeout(self):
         if self.message:
             try:
-                await self.message.edit(content="⏳ Seleção de saldo expirada.", view=None)
+                await self.message.edit(content="⏳ Balance selection expired.", view=None)
             except:
                 pass
 
     @discord.ui.select(
-        placeholder="Escolha um pacote de saldo para deletar...",
-        options=[discord.SelectOption(label=data.get('name', 'Saldo Desconhecido'), value=item_id)
+        placeholder="Choose a balance package to delete...",
+        options=[discord.SelectOption(label=data.get('name', 'Unknown Balance'), value=item_id)
                  for item_id, data in items_catalog.items() if data.get('variations', [{}])[0].get('script', {}).get('banking', False)]
-                 or [discord.SelectOption(label="Nenhum pacote de saldo disponível", value="none")]
+                 or [discord.SelectOption(label="No balance packages available", value="none")]
     )
     async def select_saldo(self, interaction: discord.Interaction, select: discord.ui.Select):
         if select.values[0] == "none":
-            await interaction.response.send_message("Nenhum pacote de saldo disponível para deleção.", ephemeral=True)
+            await interaction.response.send_message("No balance packages available for deletion.", ephemeral=True)
             return
         item_id = select.values[0]
         item_data = items_catalog.get(item_id, {})
         if not item_data or not item_data.get('variations', [{}])[0].get('script', {}).get('banking', False):
-            await interaction.response.send_message("Pacote de saldo não encontrado.", ephemeral=True)
+            await interaction.response.send_message("Balance package not found.", ephemeral=True)
             return
         await interaction.response.send_modal(DeleteSaldoModal(item_id, item_data.get('name', '')))
 
@@ -1222,18 +1222,18 @@ async def process_approved_payment(interaction, item_id, item_type, steam_id, co
     try:
         catalog = items_catalog if item_type == 'item' else passes_catalog
         if item_id not in catalog:
-            logger.error(f"Item/Passe {item_id} não encontrado.")
+            logger.error(f"Item/Pass {item_id} not found.")
             if interaction:
-                await interaction.followup.send("Item não encontrado.", ephemeral=True)
+                await interaction.followup.send("Item not found.", ephemeral=True)
             return False
         item_data = catalog[item_id]
-        # Use override_script se fornecido (vindo da variação selecionada)
+        # Use override_script if provided (from selected variation)
         if override_script:
             script_data = override_script
         else:
-            # tentar pegar script do item (compatibilidade Passe/Item)
+            # try to get script from item (Pass/Item compatibility)
             if item_type == 'item':
-                # procurar variação selecionada
+                # look for selected variation
                 variations = item_data.get('variations', [])
                 try:
                     var = variations[variation_index]
@@ -1242,13 +1242,13 @@ async def process_approved_payment(interaction, item_id, item_type, steam_id, co
                     # fallback
                     script_data = variations[0].get('script', {}) if variations else {}
             else:
-                # passes usam script principal
+                # passes use main script
                 try:
                     script_data = json.loads(item_data.get('script','{}'))
                 except:
                     script_data = item_data.get('script', {}) if isinstance(item_data.get('script'), dict) else {}
 
-        # Entregar itens normais
+        # Deliver normal items
         success = False
         if item_type == 'item':
             item_to_give = script_data.get('itemToGive')
@@ -1259,71 +1259,71 @@ async def process_approved_payment(interaction, item_id, item_type, steam_id, co
                 if items_to_give:
                     success = FTPManager.update_player_file(steam_id, item_list=items_to_give)
                 else:
-                    success = True  # Permitir sucesso se só banking
+                    success = True  # Allow success if only banking
         else:
             items_to_give = script_data.get('itemsToGive', [])
             if items_to_give:
                 success = FTPManager.update_player_file(steam_id, item_list=items_to_give)
             else:
-                success = True  # Permitir sucesso se só banking
+                success = True  # Allow success if only banking
 
-        # Adicionar saldo se "banking": true no script
+        # Add balance if "banking": true in script
         if script_data.get('banking', False):
-            banking_amount = script_data.get('currencyAmount', 100000)  # Usa currencyAmount se presente, fallback para 100000
+            banking_amount = script_data.get('currencyAmount', 100000)  # Use currencyAmount if present, fallback to 100000
             banking_success = FTPManager.update_banking_file(steam_id, banking_amount)
             if not banking_success:
-                logger.error("Falha ao atualizar saldo banking")
+                logger.error("Failed to update banking balance")
                 if interaction:
-                    await interaction.followup.send("Erro ao adicionar saldo.", ephemeral=True)
+                    await interaction.followup.send("Error adding balance.", ephemeral=True)
                 return False
             else:
-                logger.info(f"Saldo banking atualizado para {banking_amount} para {steam_id}")
+                logger.info(f"Banking balance updated to {banking_amount} for {steam_id}")
 
         if not success:
-            logger.error("Falha ao entregar item via FTPManager")
+            logger.error("Failed to deliver item via FTPManager")
             if interaction:
-                await interaction.followup.send("Erro ao entregar item.", ephemeral=True)
+                await interaction.followup.send("Error delivering item.", ephemeral=True)
             return False
 
-        # Diminuir cupom se aplicado
+        # Decrease coupon uses if applied
         if coupon_code and coupon_code in coupons and coupons[coupon_code]['uses'] > 0:
             coupons[coupon_code]['uses'] -= 1
             save_json(COUPONS_FILE, coupons)
-            logger.info(f"Cupom {coupon_code} usado. Restam {coupons[coupon_code]['uses']}")
+            logger.info(f"Coupon {coupon_code} used. {coupons[coupon_code]['uses']} remaining")
 
-        # Notificar canal de vendas
+        # Notify sales channel
         sales_channel = bot.get_channel(SALES_CHANNEL_ID)
         if sales_channel:
             try:
-                await sales_channel.send(f"🎉 Item **{item_data.get('name')}** entregue para SteamID `{steam_id}` (pagamento {payment_id}).")
+                await sales_channel.send(f"🎉 Item **{item_data.get('name')}** delivered to SteamID `{steam_id}` (payment {payment_id}).")
             except Exception as e:
-                logger.error(f"Erro ao notificar canal de vendas: {str(e)}")
+                logger.error(f"Error notifying sales channel: {str(e)}")
 
         if interaction:
             try:
-                await interaction.followup.send("✅ Item entregue com sucesso.", ephemeral=True)
+                await interaction.followup.send("✅ Item delivered successfully.", ephemeral=True)
             except:
                 pass
 
-        logger.info(f"Item {item_id} entregue para {steam_id}")
+        logger.info(f"Item {item_id} delivered to {steam_id}")
         return True
     except Exception as e:
-        logger.error(f"Erro process_approved_payment: {traceback.format_exc()}")
+        logger.error(f"Error process_approved_payment: {traceback.format_exc()}")
         if interaction:
             try:
-                await interaction.followup.send("Erro interno ao processar pagamento.", ephemeral=True)
+                await interaction.followup.send("Internal error processing payment.", ephemeral=True)
             except:
                 pass
         return False
 
-# View exibida no canal de vendas: apenas botão Comprar
+# View displayed in sales channel: only Buy button
 class ItemViewForChannel(View):
     def __init__(self, item_id: str, item_data: dict):
         super().__init__(timeout=None)
         self.item_id = item_id
         self.item_data = item_data
 
-    @discord.ui.button(label="🛒 Comprar", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="🛒 Buy", style=discord.ButtonStyle.success)
     async def confirm_purchase(self, interaction: discord.Interaction, button: Button):
         # If item has multiple variations -> show selection view
         variations = self.item_data.get('variations', [])
@@ -1335,7 +1335,7 @@ class ItemViewForChannel(View):
                 desc = ""
                 # optionally show if vehicle
                 if v.get('is_vehicle', False):
-                    desc = " (Veículo)"
+                    desc = " (Vehicle)"
                 options.append(discord.SelectOption(label=label, value=str(idx), description=desc))
             class VariationSelectView(View):
                 def __init__(self, item_id, item_data):
@@ -1344,88 +1344,88 @@ class ItemViewForChannel(View):
                     self.item_data = item_data
                     self.message = None
 
-                @discord.ui.select(placeholder="Escolha a cor/modelo...", options=options, min_values=1, max_values=1)
+                @discord.ui.select(placeholder="Choose color/model...", options=options, min_values=1, max_values=1)
                 async def select_callback(self, interaction2: discord.Interaction, select: discord.ui.Select):
                     idx = int(select.values[0])
-                    # abrir modal de steam com a variação escolhida
+                    # open steam modal with selected variation
                     modal = PurchaseSteamModal(self.item_id, 'item' if self.item_id in items_catalog else 'pass', self.item_data, variation_index=idx)
                     await interaction2.response.send_modal(modal)
 
             view = VariationSelectView(self.item_id, self.item_data)
-            await interaction.response.send_message("Escolha a variação desejada:", view=view, ephemeral=True)
+            await interaction.response.send_message("Choose desired variation:", view=view, ephemeral=True)
             return
         else:
-            # só uma variação ou nenhuma -> abrir modal padrão (variação 0)
+            # only one variation or none -> open default modal (variation 0)
             modal = PurchaseSteamModal(self.item_id, 'item' if self.item_id in items_catalog else 'pass', self.item_data, variation_index=0)
             await interaction.response.send_modal(modal)
 
 @bot.event
 async def on_ready():
-    logger.info(f"Bot conectado como {bot.user.name} (ID: {bot.user.id})")
+    logger.info(f"Bot connected as {bot.user.name} (ID: {bot.user.id})")
     logger.info(f"Admin ID: {ADMIN_ID}")
     sales_channel = bot.get_channel(SALES_CHANNEL_ID)
-    seguros_channel = bot.get_channel(SEGUROS_CHANNEL_ID)  # NOVO: Canal de seguros
-    print(f"------\nBot {bot.user.name} está online!\nComandos: !c !vincular !desvincular !store\n------")
-    # Canal de vendas
+    seguros_channel = bot.get_channel(SEGUROS_CHANNEL_ID)  # NEW: Insurance channel
+    print(f"------\nBot {bot.user.name} is online!\nCommands: !c !vincular !desvincular !store\n------")
+    # Sales channel
     if sales_channel:
         try:
             def is_bot_msg(m): return m.author == bot.user
             await sales_channel.purge(limit=200, check=is_bot_msg)
-            logger.info("Mensagens antigas do bot apagadas do canal de vendas.")
+            logger.info("Old bot messages deleted from sales channel.")
         except Exception as e:
-            logger.error(f"Erro ao apagar mensagens antigas do canal de vendas: {str(e)}")
-        # Reenviar itens
+            logger.error(f"Error deleting old messages from sales channel: {str(e)}")
+        # Resend items
         for item_id, data in items_catalog.items():
             embed = discord.Embed(title=f"{data.get('name')}", description=data.get('description',''), color=discord.Color.green())
             curr_symbol = '€' if PAYPAL_CURRENCY=='EUR' else PAYPAL_CURRENCY
-            embed.add_field(name="Preço", value=f"{curr_symbol} {data.get('price',0.0):.2f}", inline=True)
+            embed.add_field(name="Price", value=f"{curr_symbol} {data.get('price',0.0):.2f}", inline=True)
             if data.get('image_url'):
                 embed.set_image(url=data.get('image_url'))
             view = ItemViewForChannel(item_id, data)
             try:
                 await sales_channel.send(embed=embed, view=view)
             except Exception as e:
-                logger.error(f"Erro ao enviar embed de item {item_id}: {str(e)}")
-        # Reenviar passes
+                logger.error(f"Error sending item embed {item_id}: {str(e)}")
+        # Resend passes
         for pass_id, data in passes_catalog.items():
             embed = discord.Embed(title=f"{data.get('name')}", description=data.get('description',''), color=discord.Color.gold())
             curr_symbol = '€' if PAYPAL_CURRENCY=='EUR' else PAYPAL_CURRENCY
-            embed.add_field(name="Preço", value=f"{curr_symbol} {data.get('price',0.0):.2f}", inline=True)
+            embed.add_field(name="Price", value=f"{curr_symbol} {data.get('price',0.0):.2f}", inline=True)
             if data.get('image_url'):
                 embed.set_image(url=data.get('image_url'))
             view = ItemViewForChannel(pass_id, data)
             try:
                 await sales_channel.send(embed=embed, view=view)
             except Exception as e:
-                logger.error(f"Erro ao enviar embed de passe {pass_id}: {str(e)}")
-    # NOVO: Configurar canal de seguros
+                logger.error(f"Error sending pass embed {pass_id}: {str(e)}")
+    # NEW: Configure insurance channel
     if seguros_channel:
         try:
             def is_bot_msg(m): return m.author == bot.user
             await seguros_channel.purge(limit=200, check=is_bot_msg)
-            logger.info("Mensagens antigas do bot apagadas do canal de seguros.")
+            logger.info("Old bot messages deleted from insurance channel.")
             embed = discord.Embed(
-                title="🚗 Acionar Seguro",
-                description="Clique no botão abaixo para acionar o seguro de um veículo comprado. Você deve ser o comprador original e informar o SteamID usado na compra.",
+                title="🚗 Activate Insurance",
+                description="Click the button below to activate insurance for a purchased vehicle. You must be the original buyer and provide the SteamID used in the purchase.",
                 color=discord.Color.blue()
             )
             view = SegurosView()
             await seguros_channel.send(embed=embed, view=view)
-            logger.info("Embed de acionamento de seguro enviado ao canal de seguros.")
+            logger.info("Insurance activation embed sent to insurance channel.")
         except Exception as e:
-            logger.error(f"Erro ao configurar canal de seguros: {str(e)}")
+            logger.error(f"Error configuring insurance channel: {str(e)}")
 
-# Comandos prefix
+# Prefix commands
 @bot.command(name="vincular")
 async def vincular_command(ctx, steam_id: str = None):
     if steam_id:
         if not validate_steam_id(steam_id):
-            await ctx.send("SteamID inválido."); return
+            await ctx.send("Invalid SteamID."); return
         user_data[str(ctx.author.id)] = steam_id
         save_json(USER_DATA_FILE, user_data)
-        await ctx.send("✅ SteamID vinculado.")
+        await ctx.send("✅ SteamID linked.")
     else:
-        await ctx.send("Use: !vincular <steamid64>")
+        await ctx.send("Usage: !vincular <steamid64>")
 
 @bot.command(name="desvincular")
 async def desvincular_command(ctx):
@@ -1433,9 +1433,9 @@ async def desvincular_command(ctx):
     if uid in user_data:
         removed = user_data.pop(uid)
         save_json(USER_DATA_FILE, user_data)
-        await ctx.send(f"✅ Desvinculado {removed}")
+        await ctx.send(f"✅ Unlinked {removed}")
     else:
-        await ctx.send("Você não tem SteamID vinculado.")
+        await ctx.send("You don't have a linked SteamID.")
 
 @bot.command(name="store")
 async def loja_command(ctx):
@@ -1444,134 +1444,134 @@ async def loja_command(ctx):
         for item_id, data in items_catalog.items():
             embed = discord.Embed(title=f"{data.get('name')}", description=data.get('description',''), color=discord.Color.green())
             curr_symbol = '€' if PAYPAL_CURRENCY=='EUR' else PAYPAL_CURRENCY
-            embed.add_field(name="Preço", value=f"{curr_symbol} {data.get('price',0.0):.2f}")
+            embed.add_field(name="Price", value=f"{curr_symbol} {data.get('price',0.0):.2f}")
             if data.get('image_url'):
                 embed.set_image(url=data.get('image_url'))
             view = ItemViewForChannel(item_id, data)
             await dm.send(embed=embed, view=view)
-        await ctx.send("✅ Enviado DM com a loja.", delete_after=8)
+        await ctx.send("✅ Store sent to DM.", delete_after=8)
     except Exception as e:
-        logger.error(f"Erro loja DM: {str(e)}"); await ctx.send("Erro ao enviar loja por DM.")
+        logger.error(f"Error store DM: {str(e)}"); await ctx.send("Error sending store via DM.")
 
 @bot.command(name="c")
 async def config_command(ctx):
     if ctx.author.id != ADMIN_ID:
-        await ctx.send("Você não tem permissão."); return
+        await ctx.send("You don't have permission."); return
     view = View(timeout=None)
-    btn_item = Button(label="➕ Criar Item", style=discord.ButtonStyle.green)
+    btn_item = Button(label="➕ Create Item", style=discord.ButtonStyle.green)
     async def cb_item(interaction: discord.Interaction):
         await interaction.response.send_modal(CreateItemModal())
     btn_item.callback = cb_item
     view.add_item(btn_item)
-    btn_coupon = Button(label="🎫 Criar Cupom", style=discord.ButtonStyle.primary)
+    btn_coupon = Button(label="🎫 Create Coupon", style=discord.ButtonStyle.primary)
     async def cb_coupon(interaction: discord.Interaction):
         await interaction.response.send_modal(CreateCouponModal())
     btn_coupon.callback = cb_coupon
     view.add_item(btn_coupon)
 
-    btn_edit_coupon = Button(label="✏️ Editar Cupom", style=discord.ButtonStyle.blurple)
+    btn_edit_coupon = Button(label="✏️ Edit Coupon", style=discord.ButtonStyle.blurple)
     async def cb_edit_coupon(interaction: discord.Interaction):
         if not coupons:
-            await interaction.response.send_message("Nenhum cupom disponível para edição.", ephemeral=True)
+            await interaction.response.send_message("No coupons available for editing.", ephemeral=True)
             return
         select_view = CouponSelectView()
-        message = await interaction.response.send_message("Selecione um cupom para editar:", view=select_view, ephemeral=True)
+        message = await interaction.response.send_message("Select a coupon to edit:", view=select_view, ephemeral=True)
         select_view.message = message
     btn_edit_coupon.callback = cb_edit_coupon
     view.add_item(btn_edit_coupon)
-    btn_pass = Button(label="🎖️ Criar Passe", style=discord.ButtonStyle.secondary)
+    btn_pass = Button(label="🎖️ Create Pass", style=discord.ButtonStyle.secondary)
     async def cb_pass(interaction: discord.Interaction):
         await interaction.response.send_modal(CreatePassModal())
     btn_pass.callback = cb_pass
     view.add_item(btn_pass)
-    btn_edit_item = Button(label="✏️ Editar Item", style=discord.ButtonStyle.blurple)
+    btn_edit_item = Button(label="✏️ Edit Item", style=discord.ButtonStyle.blurple)
     async def cb_edit_item(interaction: discord.Interaction):
         if not items_catalog:
-            await interaction.response.send_message("Nenhum item disponível para edição.", ephemeral=True)
+            await interaction.response.send_message("No items available for editing.", ephemeral=True)
             return
         select_view = ItemSelectView()
-        message = await interaction.response.send_message("Selecione um item para editar:", view=select_view, ephemeral=True)
+        message = await interaction.response.send_message("Select an item to edit:", view=select_view, ephemeral=True)
         select_view.message = message
     btn_edit_item.callback = cb_edit_item
     view.add_item(btn_edit_item)
 
-    # Novo botão para Criar Saldo
-    btn_saldo = Button(label="➕ Criar Saldo", style=discord.ButtonStyle.green)
+    # New button for Create Balance
+    btn_saldo = Button(label="➕ Create Balance", style=discord.ButtonStyle.green)
     async def cb_saldo(interaction: discord.Interaction):
         await interaction.response.send_modal(CreateSaldoModal())
     btn_saldo.callback = cb_saldo
     view.add_item(btn_saldo)
 
-    # Botões de deleção
-    btn_delete_item = Button(label="❌ Deletar Item", style=discord.ButtonStyle.danger)
+    # Delete buttons
+    btn_delete_item = Button(label="❌ Delete Item", style=discord.ButtonStyle.danger)
     async def cb_delete_item(interaction: discord.Interaction):
         if not items_catalog:
-            await interaction.response.send_message("Nenhum item disponível para deleção.", ephemeral=True)
+            await interaction.response.send_message("No items available for deletion.", ephemeral=True)
             return
         select_view = ItemDeleteSelectView()
-        message = await interaction.response.send_message("Selecione um item para deletar:", view=select_view, ephemeral=True)
+        message = await interaction.response.send_message("Select an item to delete:", view=select_view, ephemeral=True)
         select_view.message = message
     btn_delete_item.callback = cb_delete_item
     view.add_item(btn_delete_item)
 
-    btn_delete_coupon = Button(label="❌ Deletar Cupom", style=discord.ButtonStyle.danger)
+    btn_delete_coupon = Button(label="❌ Delete Coupon", style=discord.ButtonStyle.danger)
     async def cb_delete_coupon(interaction: discord.Interaction):
         if not coupons:
-            await interaction.response.send_message("Nenhum cupom disponível para deleção.", ephemeral=True)
+            await interaction.response.send_message("No coupons available for deletion.", ephemeral=True)
             return
         select_view = CouponDeleteSelectView()
-        message = await interaction.response.send_message("Selecione um cupom para deletar:", view=select_view, ephemeral=True)
+        message = await interaction.response.send_message("Select a coupon to delete:", view=select_view, ephemeral=True)
         select_view.message = message
     btn_delete_coupon.callback = cb_delete_coupon
     view.add_item(btn_delete_coupon)
 
-    btn_delete_pass = Button(label="❌ Deletar Passe", style=discord.ButtonStyle.danger)
+    btn_delete_pass = Button(label="❌ Delete Pass", style=discord.ButtonStyle.danger)
     async def cb_delete_pass(interaction: discord.Interaction):
         if not passes_catalog:
-            await interaction.response.send_message("Nenhum passe disponível para deleção.", ephemeral=True)
+            await interaction.response.send_message("No passes available for deletion.", ephemeral=True)
             return
         select_view = PassDeleteSelectView()
-        message = await interaction.response.send_message("Selecione um passe para deletar:", view=select_view, ephemeral=True)
+        message = await interaction.response.send_message("Select a pass to delete:", view=select_view, ephemeral=True)
         select_view.message = message
     btn_delete_pass.callback = cb_delete_pass
     view.add_item(btn_delete_pass)
 
-    btn_delete_saldo = Button(label="❌ Deletar Saldo", style=discord.ButtonStyle.danger)
+    btn_delete_saldo = Button(label="❌ Delete Balance", style=discord.ButtonStyle.danger)
     async def cb_delete_saldo(interaction: discord.Interaction):
         if not any(data.get('variations', [{}])[0].get('script', {}).get('banking', False) for data in items_catalog.values()):
-            await interaction.response.send_message("Nenhum pacote de saldo disponível para deleção.", ephemeral=True)
+            await interaction.response.send_message("No balance packages available for deletion.", ephemeral=True)
             return
         select_view = SaldoDeleteSelectView()
-        message = await interaction.response.send_message("Selecione um pacote de saldo para deletar:", view=select_view, ephemeral=True)
+        message = await interaction.response.send_message("Select a balance package to delete:", view=select_view, ephemeral=True)
         select_view.message = message
     btn_delete_saldo.callback = cb_delete_saldo
     view.add_item(btn_delete_saldo)
 
-    await ctx.send("Painel de configuração:", view=view, ephemeral=True)
+    await ctx.send("Configuration panel:", view=view, ephemeral=True)
 
 @bot.command(name="limpar")
 async def limpar_command(ctx, steam_id: str):
     if ctx.author.id != ADMIN_ID:
-        await ctx.send("Você não tem permissão."); return
+        await ctx.send("You don't have permission."); return
     if not validate_steam_id(steam_id):
-        await ctx.send("SteamID inválido."); return
+        await ctx.send("Invalid SteamID."); return
     filename = f"{steam_id}.json"
     full_path = os.path.join(LOCAL_BASE_PATH, filename)
     if os.path.exists(full_path):
         try:
             os.remove(full_path)
-            await ctx.send("Arquivo limpo com sucesso.")
+            await ctx.send("File cleared successfully.")
         except Exception as e:
-            await ctx.send(f"Erro ao apagar arquivo: {str(e)}")
+            await ctx.send(f"Error deleting file: {str(e)}")
     else:
-        await ctx.send("Arquivo não encontrado.")
+        await ctx.send("File not found.")
 
 async def main():
     try:
         async with bot:
             await bot.start(BOT_TOKEN)
     except Exception:
-        logger.error(f"Erro ao iniciar bot: {traceback.format_exc()}")
+        logger.error(f"Error starting bot: {traceback.format_exc()}")
         sys.exit(1)
 
 if __name__ == "__main__":
