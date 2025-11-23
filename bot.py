@@ -10,6 +10,9 @@ import traceback
 import paypalrestsdk
 import qrcode
 import io
+import ftplib
+import paramiko
+import tempfile
 from datetime import datetime
 import sys
 from dotenv import load_dotenv
@@ -185,6 +188,14 @@ def generate_unique_id(prefix: str) -> str:
 # FTP / local manager
 class FTPManager:
     @staticmethod
+    def _get_sftp_connection():
+        """Create SFTP connection using paramiko"""
+        transport = paramiko.Transport((FTP_HOST, int(FTP_PORT)))
+        transport.connect(username=FTP_USER, password=FTP_PASS)
+        sftp = paramiko.SFTPClient.from_transport(transport)
+        return sftp, transport
+
+    @staticmethod
     def update_player_file(steam_id: str, item_name: str = None, item_list: list = None) -> bool:
         if not validate_steam_id(steam_id):
             logger.error(f"Attempt to update file with invalid SteamID: {steam_id}")
@@ -215,44 +226,141 @@ class FTPManager:
                     existing_data['itemToGive'] = "none"
                 with open(full_path, 'w', encoding='utf-8') as f:
                     json.dump(existing_data, f, indent=4, ensure_ascii=False)
-                logger.info(f"File {filename} updated in {full_path} for SteamID {steam_id}")
+                logger.info(f"File {filename} updated at {full_path} for SteamID {steam_id}")
                 return True
             except Exception as e:
                 logger.error(f"Error saving local file {filename}: {str(e)}")
                 return False
         else:
-            logger.error("FTP not configured (USE_LOCAL=false). Functionality not implemented.")
-            return False
+            # SFTP Mode
+            sftp = None
+            transport = None
+            try:
+                remote_path = FTP_BASE_PATH
+                if not remote_path.startswith('/'):
+                    remote_path = '/' + remote_path
+                remote_file = f"{remote_path}/{filename}"
+                
+                sftp, transport = FTPManager._get_sftp_connection()
+                existing_data = {}
+                # Try to download existing file
+                try:
+                    with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.json') as tmp:
+                        tmp_path = tmp.name
+                    sftp.get(remote_file, tmp_path)
+                    with open(tmp_path, 'r', encoding='utf-8') as f:
+                        existing_data = json.load(f)
+                    os.unlink(tmp_path)
+                except FileNotFoundError:
+                    existing_data = {"itemToGive": "none", "itemsToGive": []}
+                except Exception as e:
+                    logger.warning(f"Could not read existing file {remote_file}: {str(e)}")
+                    existing_data = {"itemToGive": "none", "itemsToGive": []}
+                
+                # Avoid duplication
+                current_items = set(existing_data.get('itemsToGive', []))
+                if item_list:
+                    new_items = [item for item in item_list if item not in current_items]
+                    existing_data['itemsToGive'].extend(new_items)
+                    existing_data['itemToGive'] = "none"
+                elif item_name and item_name != "none" and item_name not in current_items:
+                    existing_data['itemsToGive'].append(item_name)
+                    existing_data['itemToGive'] = "none"
+                
+                # Upload updated file
+                with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json', encoding='utf-8') as tmp:
+                    json.dump(existing_data, tmp, indent=4, ensure_ascii=False)
+                    tmp_path = tmp.name
+                
+                sftp.put(tmp_path, remote_file)
+                os.unlink(tmp_path)
+                logger.info(f"File {filename} updated via SFTP at {remote_file} for SteamID {steam_id}")
+                return True
+            except Exception as e:
+                logger.error(f"Error updating file via SFTP {filename}: {str(e)}")
+                logger.error(f"Full traceback: {traceback.format_exc()}")
+                return False
+            finally:
+                if sftp:
+                    sftp.close()
+                if transport:
+                    transport.close()
 
     @staticmethod
     def update_banking_file(steam_id: str, amount: int = 100000) -> bool:
         if not validate_steam_id(steam_id):
             logger.error(f"Attempt to update banking with invalid SteamID: {steam_id}")
             return False
-        if not USE_LOCAL:
-            logger.error("Banking update only supported in local mode (USE_LOCAL=true).")
-            return False
+        
         filename = f"{steam_id}.json"
-        full_path = os.path.join(BANKING_PATH, filename)
-        try:
-            os.makedirs(BANKING_PATH, exist_ok=True)
-            data = {}
-            # Carrega o arquivo existente sem sobrescrever
-            if os.path.exists(full_path):
-                with open(full_path, 'r', encoding='utf-8') as f:
-                    try:
+        
+        if USE_LOCAL:
+            full_path = os.path.join(BANKING_PATH, filename)
+            try:
+                os.makedirs(BANKING_PATH, exist_ok=True)
+                data = {}
+                # Load existing file without overwriting
+                if os.path.exists(full_path):
+                    with open(full_path, 'r', encoding='utf-8') as f:
+                        try:
+                            data = json.load(f)
+                        except:
+                            data = {}
+                # Only update m_OwnedCurrency, keeping other fields
+                data['m_OwnedCurrency'] = amount
+                with open(full_path, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, indent=4, ensure_ascii=False)
+                logger.info(f"Balance updated to {amount} in {full_path} for SteamID {steam_id}")
+                return True
+            except Exception as e:
+                logger.error(f"Error updating banking {filename}: {str(e)}")
+                return False
+        else:
+            # SFTP mode for banking
+            sftp = None
+            transport = None
+            try:
+                remote_path = BANKING_PATH
+                if not remote_path.startswith('/'):
+                    remote_path = '/' + remote_path
+                remote_file = f"{remote_path}/{filename}"
+                
+                sftp, transport = FTPManager._get_sftp_connection()
+                data = {}
+                # Try to download existing file
+                try:
+                    with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.json') as tmp:
+                        tmp_path = tmp.name
+                    sftp.get(remote_file, tmp_path)
+                    with open(tmp_path, 'r', encoding='utf-8') as f:
                         data = json.load(f)
-                    except:
-                        data = {}
-            # Only update m_OwnedCurrency, keeping other fields
-            data['m_OwnedCurrency'] = amount
-            with open(full_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=4, ensure_ascii=False)
-            logger.info(f"Balance updated to {amount} in {full_path} for SteamID {steam_id}")
-            return True
-        except Exception as e:
-            logger.error(f"Error updating banking {filename}: {str(e)}")
-            return False
+                    os.unlink(tmp_path)
+                except FileNotFoundError:
+                    pass  # File doesn't exist, will create new
+                except Exception as e:
+                    logger.warning(f"Could not read existing banking file {remote_file}: {str(e)}")
+                
+                # Only update m_OwnedCurrency, keeping other fields
+                data['m_OwnedCurrency'] = amount
+                
+                # Upload updated file
+                with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json', encoding='utf-8') as tmp:
+                    json.dump(data, tmp, indent=4, ensure_ascii=False)
+                    tmp_path = tmp.name
+                
+                sftp.put(tmp_path, remote_file)
+                os.unlink(tmp_path)
+                logger.info(f"Banking file {filename} updated via SFTP at {remote_file} with balance {amount} for SteamID {steam_id}")
+                return True
+            except Exception as e:
+                logger.error(f"Error updating banking via SFTP {filename}: {str(e)}")
+                logger.error(f"Full traceback: {traceback.format_exc()}")
+                return False
+            finally:
+                if sftp:
+                    sftp.close()
+                if transport:
+                    transport.close()
 
 # PayPal helpers
 class PayPalPayment:
@@ -823,6 +931,9 @@ class PurchaseSteamModal(Modal):
 
         # If final price is 0 -> immediate delivery
         if final_price == 0.0:
+            # Defer response immediately to avoid timeout
+            await interaction.response.defer(ephemeral=True)
+            
             success = await process_approved_payment(
                 None,
                 self.item_id,
@@ -856,10 +967,13 @@ class PurchaseSteamModal(Modal):
                         "drops": drops
                     }
                     save_json(COMPRAS_FILE, compras)
-                await interaction.response.send_message("✅ Free item delivered successfully! Use the insurance channel to activate.", ephemeral=True)
+                await interaction.followup.send("✅ Free item delivered successfully! Use the insurance channel to activate.", ephemeral=True)
             else:
-                await interaction.response.send_message("Error delivering free item.", ephemeral=True)
+                await interaction.followup.send("Error delivering free item.", ephemeral=True)
             return
+
+        # Defer response to avoid timeout (payment creation takes time)
+        await interaction.response.defer(ephemeral=True)
 
         # Create payment for non-free items
         payment_result = await PayPalPayment.create_payment(
@@ -875,7 +989,7 @@ class PurchaseSteamModal(Modal):
         sales_channel = bot.get_channel(SALES_CHANNEL_ID)
         if not sales_channel:
             logger.error("Sales channel not found")
-            await interaction.response.send_message("Sales channel not found.", ephemeral=True)
+            await interaction.followup.send("Sales channel not found.", ephemeral=True)
             return
         try:
             thread = await sales_channel.create_thread(
@@ -887,7 +1001,7 @@ class PurchaseSteamModal(Modal):
             await thread.add_user(interaction.user)
         except Exception as e:
             logger.error(f"Error creating thread: {str(e)}")
-            await interaction.response.send_message("Error creating thread.", ephemeral=True)
+            await interaction.followup.send("Error creating thread.", ephemeral=True)
             return
 
         if payment_result["status"] == "pending":
@@ -1015,10 +1129,10 @@ class PurchaseSteamModal(Modal):
                     save_json(SEGUROS_FILE, seguros)
                     await thread.send(f"✅ Insurance contracted! {drops} insurance(s) added for SteamID `{steam_target}`. Use the insurance channel to activate.")
 
-            await interaction.response.send_message(f"✅ Order created. Check the thread: {thread.name}", ephemeral=True)
+            await interaction.followup.send(f"✅ Order created. Check the thread: {thread.mention}", ephemeral=True)
         else:
             logger.error(f"Error creating payment: {payment_result.get('message')}")
-            await interaction.response.send_message(f"Error creating payment: {payment_result.get('message')}", ephemeral=True)
+            await interaction.followup.send(f"Error creating payment: {payment_result.get('message')}", ephemeral=True)
 
 # NEW: View for insurance channel
 class SegurosView(View):
