@@ -30,6 +30,7 @@ PAYPAL_CURRENCY = os.getenv('PAYPAL_CURRENCY', 'EUR').upper()
 USE_LOCAL = os.getenv('USE_LOCAL', 'false').lower() == 'true'
 LOCAL_BASE_PATH = os.getenv('LOCAL_BASE_PATH')
 BANKING_PATH = os.getenv('BANKING_PATH')  # New: Specific path for banking
+VEHICLE_SPAWN_PATH = os.getenv('VEHICLE_SPAWN_PATH')  # New: Vehicle spawn files path
 FTP_HOST = os.getenv('FTP_HOST')
 FTP_PORT = os.getenv('FTP_PORT', '21')
 FTP_USER = os.getenv('FTP_USER')
@@ -362,6 +363,67 @@ class FTPManager:
                 if transport:
                     transport.close()
 
+    @staticmethod
+    def create_vehicle_file(steam_id: str, class_name: str, spawns: int, cooldown: int, guarantee: int, unique: bool, vehicle_path: str) -> bool:
+        """Create vehicle spawn file for player"""
+        if not validate_steam_id(steam_id):
+            logger.error(f"Attempt to create vehicle file with invalid SteamID: {steam_id}")
+            return False
+        
+        # Vehicle filename: use className as filename
+        filename = f"{class_name}.json"
+        
+        vehicle_data = {
+            "steamID": steam_id,
+            "className": class_name,
+            "amountOfAvailableSpawns": spawns,
+            "timeBeforeNextSpawn": cooldown,
+            "guaranteePeriod": guarantee,
+            "isUnique": 1 if unique else 0
+        }
+        
+        if USE_LOCAL:
+            full_path = os.path.join(vehicle_path, filename)
+            try:
+                os.makedirs(vehicle_path, exist_ok=True)
+                with open(full_path, 'w', encoding='utf-8') as f:
+                    json.dump(vehicle_data, f, indent=4, ensure_ascii=False)
+                logger.info(f"Vehicle file {filename} created at {full_path} for SteamID {steam_id}")
+                return True
+            except Exception as e:
+                logger.error(f"Error creating vehicle file {filename}: {str(e)}")
+                return False
+        else:
+            # SFTP mode for vehicle
+            sftp = None
+            transport = None
+            try:
+                remote_path = vehicle_path
+                if not remote_path.startswith('/'):
+                    remote_path = '/' + remote_path
+                remote_file = f"{remote_path}/{filename}"
+                
+                sftp, transport = FTPManager._get_sftp_connection()
+                
+                # Upload vehicle file directly
+                with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json', encoding='utf-8') as tmp:
+                    json.dump(vehicle_data, tmp, indent=4, ensure_ascii=False)
+                    tmp_path = tmp.name
+                
+                sftp.put(tmp_path, remote_file)
+                os.unlink(tmp_path)
+                logger.info(f"Vehicle file {filename} created via SFTP at {remote_file} for SteamID {steam_id}")
+                return True
+            except Exception as e:
+                logger.error(f"Error creating vehicle file via SFTP {filename}: {str(e)}")
+                logger.error(f"Full traceback: {traceback.format_exc()}")
+                return False
+            finally:
+                if sftp:
+                    sftp.close()
+                if transport:
+                    transport.close()
+
 # PayPal helpers
 class PayPalPayment:
     @staticmethod
@@ -471,34 +533,10 @@ class DeleteCouponModal(Modal):
         else:
             await interaction.response.send_message("Coupon not found.", ephemeral=True)
 
-class DeletePassModal(Modal):
-    def __init__(self, pass_id: str, pass_name: str):
-        super().__init__(title=f"Delete Pass: {pass_name}")
-        self.pass_id = pass_id
-        self.confirm = TextInput(label="Type 'YES' to confirm deletion", required=True)
-        self.add_item(self.confirm)
 
-    async def on_submit(self, interaction: discord.Interaction):
-        if self.confirm.value.strip().upper() != "YES":
-            await interaction.response.send_message("Invalid confirmation. Type 'YES' to delete.", ephemeral=True)
-            return
-        if self.pass_id in passes_catalog:
-            del passes_catalog[self.pass_id]
-            save_json(PASSES_FILE, passes_catalog)
-            save_list_to_txt(PASSES_LIST_TXT, passes_catalog)
-            sales_channel = bot.get_channel(SALES_CHANNEL_ID)
-            if sales_channel:
-                async for message in sales_channel.history(limit=200):
-                    if message.author == bot.user and message.embeds and message.embeds[0].title == passes_catalog.get(self.pass_id, {}).get('name', ''):
-                        await message.delete()
-                        break
-            await interaction.response.send_message(f"✅ Pass **{passes_catalog.get(self.pass_id, {}).get('name', '')}** deleted successfully.", ephemeral=True)
-        else:
-            await interaction.response.send_message("Pass not found.", ephemeral=True)
-
-class DeleteSaldoModal(Modal):
+class DeleteVehicleModal(Modal):
     def __init__(self, item_id: str, item_name: str):
-        super().__init__(title=f"Delete Balance: {item_name}")
+        super().__init__(title=f"Delete Vehicle: {item_name}")
         self.item_id = item_id
         self.confirm = TextInput(label="Type 'YES' to confirm deletion", required=True)
         self.add_item(self.confirm)
@@ -517,9 +555,9 @@ class DeleteSaldoModal(Modal):
                     if message.author == bot.user and message.embeds and message.embeds[0].title == items_catalog.get(self.item_id, {}).get('name', ''):
                         await message.delete()
                         break
-            await interaction.response.send_message(f"✅ Balance Package **{items_catalog.get(self.item_id, {}).get('name', '')}** deleted successfully.", ephemeral=True)
+            await interaction.response.send_message(f"✅ Vehicle **{items_catalog.get(self.item_id, {}).get('name', '')}** deleted successfully.", ephemeral=True)
         else:
-            await interaction.response.send_message("Balance Package not found.", ephemeral=True)
+            await interaction.response.send_message("Vehicle not found.", ephemeral=True)
 
 class CreateItemModal(Modal):
     def __init__(self):
@@ -759,74 +797,75 @@ class CouponSelectView(View):
         data = coupons.get(code, {})
         await interaction.response.send_modal(EditCouponModal(code, data))
 
-class CreatePassModal(Modal):
-    def __init__(self):
-        super().__init__(title="Create Pass")
-        self.name = TextInput(label="Pass Name", required=True)
-        self.price = TextInput(label=f"Price ({'€' if PAYPAL_CURRENCY=='EUR' else PAYPAL_CURRENCY})", required=True)
-        self.image_url = TextInput(label="Image URL (optional)", required=False)
-        self.script = TextInput(label="Script JSON", style=discord.TextStyle.paragraph, required=True)
-        self.add_item(self.name)
-        self.add_item(self.price)
-        self.add_item(self.image_url)
-        self.add_item(self.script)
 
-    async def on_submit(self, interaction: discord.Interaction):
-        try:
-            price = float(self.price.value.replace(',', '.'))
-            json.loads(self.script.value)
-            pass_id = generate_unique_id("pass")
-            passes_catalog[pass_id] = {
-                "name": self.name.value,
-                "price": price,
-                "image_url": self.image_url.value,
-                "script": self.script.value
-            }
-            save_json(PASSES_FILE, passes_catalog)
-            save_list_to_txt(PASSES_LIST_TXT, passes_catalog)
-            await interaction.response.send_message(f"✅ Pass {self.name.value} created ({pass_id}).", ephemeral=True)
-        except Exception as e:
-            await interaction.response.send_message(f"Error: {str(e)}", ephemeral=True)
 
-class CreateSaldoModal(Modal):
+class CreateVehicleModal(Modal):
     def __init__(self):
-        super().__init__(title="Create Balance Package")
-        self.name = TextInput(label="Package Name", placeholder="Ex: 50K Balance", required=True)
-        self.price = TextInput(label=f"Price ({'€' if PAYPAL_CURRENCY=='EUR' else PAYPAL_CURRENCY})", placeholder="Ex: 30.00", required=True)
-        self.currency_amount = TextInput(label="Balance Amount", placeholder="Ex: 50000", required=True)
+        super().__init__(title="Create Vehicle")
+        self.name = TextInput(label="Vehicle Name", placeholder="Ex: RAM 1500 TRX Black", required=True)
+        currency_label = '€' if PAYPAL_CURRENCY == 'EUR' else PAYPAL_CURRENCY
+        self.price = TextInput(label=f"Price ({currency_label})", placeholder="Ex: 50.00", required=True)
+        self.class_name = TextInput(label="Vehicle Class Name", placeholder="Ex: CrSk_RAM_1500_TRX_Black", required=True)
+        self.vehicle_config = TextInput(
+            label="Vehicle Config (spawns,cooldown,guarantee)",
+            placeholder="Ex: 7,600,604800 (7 spawns, 10min cooldown, 7 days guarantee)",
+            required=True,
+            default="7,600,604800"
+        )
         self.image_url = TextInput(label="Image URL (optional)", placeholder="https://...", required=False)
         self.add_item(self.name)
         self.add_item(self.price)
-        self.add_item(self.currency_amount)
+        self.add_item(self.class_name)
+        self.add_item(self.vehicle_config)
         self.add_item(self.image_url)
 
     async def on_submit(self, interaction: discord.Interaction):
         try:
             price = float(self.price.value.replace(',', '.'))
             if price < 0:
-                await interaction.response.send_message("Price cannot be negative.", ephemeral=True); return
-
-            amount = int(self.currency_amount.value)
-            if amount <= 0:
-                await interaction.response.send_message("Balance amount must be positive.", ephemeral=True); return
-
-            item_id = generate_unique_id("saldo")
+                await interaction.response.send_message("Price cannot be negative.", ephemeral=True)
+                return
+            
+            class_name = self.class_name.value.strip()
+            if not class_name:
+                await interaction.response.send_message("Vehicle class name is required.", ephemeral=True)
+                return
+            
+            # Parse vehicle config: spawns,cooldown,guarantee
+            config_parts = [p.strip() for p in self.vehicle_config.value.split(',')]
+            if len(config_parts) != 3:
+                await interaction.response.send_message("Invalid vehicle config format. Use: spawns,cooldown,guarantee", ephemeral=True)
+                return
+            
+            try:
+                spawns = int(config_parts[0])
+                cooldown = int(config_parts[1])
+                guarantee = int(config_parts[2])
+            except ValueError:
+                await interaction.response.send_message("Vehicle config must be numbers.", ephemeral=True)
+                return
+            
+            # Create as special vehicle item
+            item_id = generate_unique_id("vehicle")
             item_obj = {
                 "name": self.name.value,
                 "price": price,
                 "image_url": self.image_url.value,
-                "is_vehicle": False,
+                "is_vehicle": True,
+                "vehicle_type": "spawn_vehicle",  # Special marker for vehicle spawn system
                 "insurance_drops": 0,
                 "variations": [
                     {
                         "name": "Default",
                         "script": {
-                            "itemsToGive": [],
-                            "banking": True,
-                            "currencyAmount": amount
+                            "vehicleClassName": class_name,
+                            "amountOfAvailableSpawns": spawns,
+                            "timeBeforeNextSpawn": cooldown,
+                            "guaranteePeriod": guarantee,
+                            "isUnique": True
                         },
                         "image_url": "",
-                        "is_vehicle": False,
+                        "is_vehicle": True,
                         "insurance_drops": 0
                     }
                 ]
@@ -834,9 +873,9 @@ class CreateSaldoModal(Modal):
             items_catalog[item_id] = item_obj
             save_json(ITEMS_FILE, items_catalog)
             save_list_to_txt(ITEMS_LIST_TXT, items_catalog)
-            await interaction.response.send_message(f"✅ Balance Package **{self.name.value}** created with ID `{item_id}`.", ephemeral=True)
+            await interaction.response.send_message(f"✅ Vehicle **{self.name.value}** created with ID `{item_id}`.", ephemeral=True)
         except Exception as e:
-            await interaction.response.send_message(f"Error creating balance package: {str(e)}", ephemeral=True)
+            await interaction.response.send_message(f"Error creating vehicle: {str(e)}", ephemeral=True)
 
 class VincularSteamModal(Modal):
     def __init__(self):
@@ -1293,15 +1332,7 @@ class PassDeleteSelectView(View):
                  for pass_id, data in passes_catalog.items()] or [discord.SelectOption(label="No passes available", value="none")]
     )
     async def select_pass(self, interaction: discord.Interaction, select: discord.ui.Select):
-        if select.values[0] == "none":
-            await interaction.response.send_message("No passes available for deletion.", ephemeral=True)
-            return
-        pass_id = select.values[0]
-        pass_data = passes_catalog.get(pass_id, {})
-        if not pass_data:
-            await interaction.response.send_message("Pass not found.", ephemeral=True)
-            return
-        await interaction.response.send_modal(DeletePassModal(pass_id, pass_data.get('name', '')))
+        await interaction.response.send_message("Pass deletion disabled.", ephemeral=True)
 
 class SaldoDeleteSelectView(View):
     def __init__(self):
@@ -1322,15 +1353,36 @@ class SaldoDeleteSelectView(View):
                  or [discord.SelectOption(label="No balance packages available", value="none")]
     )
     async def select_saldo(self, interaction: discord.Interaction, select: discord.ui.Select):
+        await interaction.response.send_message("Balance deletion disabled.", ephemeral=True)
+
+class VehicleDeleteSelectView(View):
+    def __init__(self):
+        super().__init__(timeout=60)
+        self.message = None
+
+    async def on_timeout(self):
+        if self.message:
+            try:
+                await self.message.edit(content="⏳ Vehicle selection expired.", view=None)
+            except:
+                pass
+
+    @discord.ui.select(
+        placeholder="Choose a vehicle to delete...",
+        options=[discord.SelectOption(label=data.get('name', 'Unknown Vehicle'), value=item_id)
+                 for item_id, data in items_catalog.items() if data.get('vehicle_type') == 'spawn_vehicle']
+                 or [discord.SelectOption(label="No vehicles available", value="none")]
+    )
+    async def select_vehicle(self, interaction: discord.Interaction, select: discord.ui.Select):
         if select.values[0] == "none":
-            await interaction.response.send_message("No balance packages available for deletion.", ephemeral=True)
+            await interaction.response.send_message("No vehicles available for deletion.", ephemeral=True)
             return
         item_id = select.values[0]
         item_data = items_catalog.get(item_id, {})
-        if not item_data or not item_data.get('variations', [{}])[0].get('script', {}).get('banking', False):
-            await interaction.response.send_message("Balance package not found.", ephemeral=True)
+        if not item_data or item_data.get('vehicle_type') != 'spawn_vehicle':
+            await interaction.response.send_message("Vehicle not found.", ephemeral=True)
             return
-        await interaction.response.send_modal(DeleteSaldoModal(item_id, item_data.get('name', '')))
+        await interaction.response.send_modal(DeleteVehicleModal(item_id, item_data.get('name', '')))
 
 async def process_approved_payment(interaction, item_id, item_type, steam_id, coupon_code, amount, payment_id, user_id, override_script=None, variation_index=0):
     try:
@@ -1362,42 +1414,70 @@ async def process_approved_payment(interaction, item_id, item_type, steam_id, co
                 except:
                     script_data = item_data.get('script', {}) if isinstance(item_data.get('script'), dict) else {}
 
-        # Deliver normal items
-        success = False
-        if item_type == 'item':
-            item_to_give = script_data.get('itemToGive')
-            if item_to_give and item_to_give != "none":
-                success = FTPManager.update_player_file(steam_id, item_name=item_to_give)
+        # Check if this is a vehicle spawn item
+        vehicle_type = item_data.get('vehicle_type')
+        if vehicle_type == 'spawn_vehicle':
+            # Vehicle spawn delivery - extract from script_data
+            class_name = script_data.get('vehicleClassName', '')
+            spawns = script_data.get('amountOfAvailableSpawns', 1)
+            cooldown = script_data.get('timeBeforeNextSpawn', 600)
+            guarantee = script_data.get('guaranteePeriod', 604800)
+            is_unique = script_data.get('isUnique', True)
+            
+            success = FTPManager.create_vehicle_file(
+                steam_id=steam_id,
+                class_name=class_name,
+                spawns=spawns,
+                cooldown=cooldown,
+                guarantee=guarantee,
+                unique=is_unique,
+                vehicle_path=VEHICLE_SPAWN_PATH
+            )
+            
+            if not success:
+                logger.error(f"Failed to create vehicle spawn file for {class_name}")
+                if interaction:
+                    await interaction.followup.send("Error delivering vehicle spawn.", ephemeral=True)
+                return False
+            
+            logger.info(f"Vehicle spawn {class_name} delivered to {steam_id}")
+        else:
+            # Deliver normal items
+            success = False
+            if item_type == 'item':
+                item_to_give = script_data.get('itemToGive')
+                if item_to_give and item_to_give != "none":
+                    success = FTPManager.update_player_file(steam_id, item_name=item_to_give)
+                else:
+                    items_to_give = script_data.get('itemsToGive', [])
+                    if items_to_give:
+                        success = FTPManager.update_player_file(steam_id, item_list=items_to_give)
+                    else:
+                        success = True  # Allow success if only banking
             else:
                 items_to_give = script_data.get('itemsToGive', [])
                 if items_to_give:
                     success = FTPManager.update_player_file(steam_id, item_list=items_to_give)
                 else:
                     success = True  # Allow success if only banking
-        else:
-            items_to_give = script_data.get('itemsToGive', [])
-            if items_to_give:
-                success = FTPManager.update_player_file(steam_id, item_list=items_to_give)
-            else:
-                success = True  # Allow success if only banking
 
-        # Add balance if "banking": true in script
-        if script_data.get('banking', False):
-            banking_amount = script_data.get('currencyAmount', 100000)  # Use currencyAmount if present, fallback to 100000
-            banking_success = FTPManager.update_banking_file(steam_id, banking_amount)
-            if not banking_success:
-                logger.error("Failed to update banking balance")
+            # Add balance if "banking": true in script
+            if script_data.get('banking', False):
+                banking_amount = script_data.get('currencyAmount', 100000)  # Use currencyAmount if present, fallback to 100000
+                banking_success = FTPManager.update_banking_file(steam_id, banking_amount)
+                if not banking_success:
+                    logger.error("Failed to update banking balance")
+                    if interaction:
+                        await interaction.followup.send("Error adding balance.", ephemeral=True)
+                    return False
+                else:
+                    logger.info(f"Banking balance updated to {banking_amount} for {steam_id}")
+
+            if not success:
+                logger.error("Failed to deliver item via FTPManager")
                 if interaction:
-                    await interaction.followup.send("Error adding balance.", ephemeral=True)
+                    await interaction.followup.send("Error delivering item.", ephemeral=True)
                 return False
-            else:
-                logger.info(f"Banking balance updated to {banking_amount} for {steam_id}")
-
-        if not success:
-            logger.error("Failed to deliver item via FTPManager")
-            if interaction:
-                await interaction.followup.send("Error delivering item.", ephemeral=True)
-            return False
 
         # Decrease coupon uses if applied
         if coupon_code and coupon_code in coupons and coupons[coupon_code]['uses'] > 0:
@@ -1593,11 +1673,6 @@ async def config_command(ctx):
         select_view.message = message
     btn_edit_coupon.callback = cb_edit_coupon
     view.add_item(btn_edit_coupon)
-    btn_pass = Button(label="🎖️ Create Pass", style=discord.ButtonStyle.secondary)
-    async def cb_pass(interaction: discord.Interaction):
-        await interaction.response.send_modal(CreatePassModal())
-    btn_pass.callback = cb_pass
-    view.add_item(btn_pass)
     btn_edit_item = Button(label="✏️ Edit Item", style=discord.ButtonStyle.blurple)
     async def cb_edit_item(interaction: discord.Interaction):
         if not items_catalog:
@@ -1609,12 +1684,12 @@ async def config_command(ctx):
     btn_edit_item.callback = cb_edit_item
     view.add_item(btn_edit_item)
 
-    # New button for Create Balance
-    btn_saldo = Button(label="➕ Create Balance", style=discord.ButtonStyle.green)
-    async def cb_saldo(interaction: discord.Interaction):
-        await interaction.response.send_modal(CreateSaldoModal())
-    btn_saldo.callback = cb_saldo
-    view.add_item(btn_saldo)
+    # New button for Create Vehicle
+    btn_vehicle = Button(label="🚗 Create Vehicle", style=discord.ButtonStyle.green)
+    async def cb_vehicle(interaction: discord.Interaction):
+        await interaction.response.send_modal(CreateVehicleModal())
+    btn_vehicle.callback = cb_vehicle
+    view.add_item(btn_vehicle)
 
     # Delete buttons
     btn_delete_item = Button(label="❌ Delete Item", style=discord.ButtonStyle.danger)
@@ -1639,27 +1714,16 @@ async def config_command(ctx):
     btn_delete_coupon.callback = cb_delete_coupon
     view.add_item(btn_delete_coupon)
 
-    btn_delete_pass = Button(label="❌ Delete Pass", style=discord.ButtonStyle.danger)
-    async def cb_delete_pass(interaction: discord.Interaction):
-        if not passes_catalog:
-            await interaction.response.send_message("No passes available for deletion.", ephemeral=True)
+    btn_delete_vehicle = Button(label="❌ Delete Vehicle", style=discord.ButtonStyle.danger)
+    async def cb_delete_vehicle(interaction: discord.Interaction):
+        if not any(data.get('vehicle_type') == 'spawn_vehicle' for data in items_catalog.values()):
+            await interaction.response.send_message("No vehicles available for deletion.", ephemeral=True)
             return
-        select_view = PassDeleteSelectView()
-        message = await interaction.response.send_message("Select a pass to delete:", view=select_view, ephemeral=True)
+        select_view = VehicleDeleteSelectView()
+        message = await interaction.response.send_message("Select a vehicle to delete:", view=select_view, ephemeral=True)
         select_view.message = message
-    btn_delete_pass.callback = cb_delete_pass
-    view.add_item(btn_delete_pass)
-
-    btn_delete_saldo = Button(label="❌ Delete Balance", style=discord.ButtonStyle.danger)
-    async def cb_delete_saldo(interaction: discord.Interaction):
-        if not any(data.get('variations', [{}])[0].get('script', {}).get('banking', False) for data in items_catalog.values()):
-            await interaction.response.send_message("No balance packages available for deletion.", ephemeral=True)
-            return
-        select_view = SaldoDeleteSelectView()
-        message = await interaction.response.send_message("Select a balance package to delete:", view=select_view, ephemeral=True)
-        select_view.message = message
-    btn_delete_saldo.callback = cb_delete_saldo
-    view.add_item(btn_delete_saldo)
+    btn_delete_vehicle.callback = cb_delete_vehicle
+    view.add_item(btn_delete_vehicle)
 
     await ctx.send("Configuration panel:", view=view, ephemeral=True)
 
