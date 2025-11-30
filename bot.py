@@ -16,6 +16,8 @@ import tempfile
 from datetime import datetime
 import sys
 from dotenv import load_dotenv
+from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo import MongoClient
 
 # Load .env
 load_dotenv()
@@ -23,6 +25,7 @@ load_dotenv()
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 SALES_CHANNEL_ID = int(os.getenv('SALES_CHANNEL_ID') or '0')
 ADMIN_ID = int(os.getenv('ADMIN_ID') or '0')
+CONTROL_PANEL_CHANNEL_ID = int(os.getenv('CONTROL_PANEL_CHANNEL_ID') or '0')
 PAYPAL_CLIENT_ID = os.getenv('PAYPAL_CLIENT_ID')
 PAYPAL_CLIENT_SECRET = os.getenv('PAYPAL_CLIENT_SECRET')
 PAYPAL_MODE = os.getenv('PAYPAL_MODE', 'sandbox')
@@ -40,6 +43,8 @@ SEGUROS_CHANNEL_ID = int(os.getenv('SEGUROS_CHANNEL_ID') or '0')
 GUILD_ID = int(os.getenv('GUILD_ID') or '0')
 PELTCURRENCY_PATH = os.getenv('PELTCURRENCY_PATH')
 CAC_ROLE_ID = int(os.getenv('CAC_ROLE_ID') or '0')
+MONGODB_URI = os.getenv('MONGODB_URI', 'mongodb://localhost:27017/')
+MONGODB_DB_NAME = os.getenv('MONGODB_DB_NAME', 'dayz_store')
 
 # Minimum validations
 if not BOT_TOKEN:
@@ -48,6 +53,8 @@ if not SALES_CHANNEL_ID:
     print("Error: SALES_CHANNEL_ID not defined in .env"); sys.exit(1)
 if not ADMIN_ID:
     print("Error: ADMIN_ID not defined in .env"); sys.exit(1)
+if not CONTROL_PANEL_CHANNEL_ID:
+    print("Error: CONTROL_PANEL_CHANNEL_ID not defined in .env"); sys.exit(1)
 if not PAYPAL_CLIENT_ID:
     print("Error: PAYPAL_CLIENT_ID not defined in .env"); sys.exit(1)
 if not PAYPAL_CLIENT_SECRET:
@@ -74,6 +81,24 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# MongoDB Connection
+try:
+    mongo_client = AsyncIOMotorClient(MONGODB_URI)
+    db = mongo_client[MONGODB_DB_NAME]
+    # Collections
+    items_collection = db['items_catalog']
+    coupons_collection = db['coupons']
+    passes_collection = db['battle_passes']
+    user_data_collection = db['user_data']
+    seguros_collection = db['seguros']
+    compras_collection = db['compras']
+    pending_payments_collection = db['pending_payments']
+    sales_lists_collection = db['sales_lists']  # New: For lista_itens and lista_passes
+    logger.info("MongoDB connected successfully")
+except Exception as e:
+    logger.error(f"Error connecting to MongoDB: {str(e)}")
+    sys.exit(1)
+
 # Initialize PayPal
 try:
     paypalrestsdk.configure({
@@ -91,12 +116,67 @@ ITEMS_FILE = "items_catalog.json"
 COUPONS_FILE = "coupons.json"
 PASSES_FILE = "battle_passes.json"
 USER_DATA_FILE = "user_data.json"
-ITEMS_LIST_TXT = "lista_itens_venda.txt"
-PASSES_LIST_TXT = "lista_passes_venda.txt"
+ITEMS_LIST_TXT = "list_items.txt"
 SEGUROS_FILE = "seguros.json"
 SEGUROS_LOG = "seguros_acionados.txt"
 COMPRAS_FILE = "compras.json"  # NEW: File to register purchases with insurance
 
+# MongoDB Helper Functions
+async def load_from_mongodb(collection_name):
+    """Load all documents from a MongoDB collection"""
+    try:
+        collection = db[collection_name]
+        documents = await collection.find().to_list(length=None)
+        result = {}
+        for doc in documents:
+            doc_id = doc.pop('_id', None)
+            key = doc.pop('key', str(doc_id))
+            result[key] = doc
+        return result
+    except Exception as e:
+        logger.error(f"Error loading from MongoDB collection {collection_name}: {str(e)}")
+        return {}
+
+async def save_to_mongodb(collection_name, key, data):
+    """Save a single document to MongoDB"""
+    try:
+        collection = db[collection_name]
+        data_to_save = {'key': key, **data}
+        await collection.replace_one({'key': key}, data_to_save, upsert=True)
+        logger.info(f"Saved to MongoDB {collection_name}: {key}")
+        return True
+    except Exception as e:
+        logger.error(f"Error saving to MongoDB {collection_name}: {str(e)}")
+        return False
+
+async def save_all_to_mongodb(collection_name, data_dict):
+    """Save all data to MongoDB collection"""
+    try:
+        collection = db[collection_name]
+        # Clear collection first
+        await collection.delete_many({})
+        # Insert all items
+        for key, value in data_dict.items():
+            data_to_save = {'key': key, **value}
+            await collection.insert_one(data_to_save)
+        logger.info(f"Saved all data to MongoDB {collection_name}: {len(data_dict)} items")
+        return True
+    except Exception as e:
+        logger.error(f"Error saving all to MongoDB {collection_name}: {str(e)}")
+        return False
+
+async def delete_from_mongodb(collection_name, key):
+    """Delete a document from MongoDB"""
+    try:
+        collection = db[collection_name]
+        result = await collection.delete_one({'key': key})
+        logger.info(f"Deleted from MongoDB {collection_name}: {key}")
+        return result.deleted_count > 0
+    except Exception as e:
+        logger.error(f"Error deleting from MongoDB {collection_name}: {str(e)}")
+        return False
+
+# Legacy JSON functions for backward compatibility and migration
 def load_json(filename, default=None):
     if default is None:
         default = {}
@@ -119,35 +199,85 @@ def save_json(filename, data):
     except Exception as e:
         logger.error(f"Error saving {filename}: {str(e)}")
 
-def save_list_to_txt(filename, catalog):
+async def save_list_to_txt(filename, catalog):
+    """Save items catalog list to MongoDB only (no local file)"""
     try:
-        with open(filename, 'w', encoding='utf-8') as f:
-            if not catalog:
-                f.write("No items/passes registered.\n")
-                return
-            f.write(f"--- List Updated on {datetime.now().strftime('%d/%m/%Y %H:%M:%S')} ---\n\n")
+        content_lines = []
+        if not catalog:
+            content_lines.append("No items registered.\n")
+        else:
+            content_lines.append(f"--- List Updated on {datetime.now().strftime('%d/%m/%Y %H:%M:%S')} ---\n\n")
             for item_id, data in catalog.items():
                 # Format price according to selected currency (simple symbol mapping)
                 symbol = '€' if PAYPAL_CURRENCY == 'EUR' else (PAYPAL_CURRENCY + ' ')
                 price_str = f"{symbol}{data.get('price', 0.0):.2f}"
-                f.write(f"- {data.get('name', 'Undefined Name')} ({item_id}): {price_str}\n")
-            f.write("\n--- End of List ---")
-        logger.info(f"List saved in {filename}")
+                content_lines.append(f"- {data.get('name', 'Undefined Name')} ({item_id}): {price_str}\n")
+            content_lines.append("\n--- End of List ---")
+        
+        # Save to MongoDB only
+        list_content = ''.join(content_lines)
+        await save_to_mongodb('sales_lists', 'items', {
+            'filename': filename,
+            'content': list_content,
+            'updated_at': datetime.now().isoformat()
+        })
+        
+        logger.info(f"Items list saved to MongoDB (no local file)")
     except Exception as e:
-        logger.error(f"Error saving list in {filename}: {str(e)}")
+        logger.error(f"Error saving items list to MongoDB: {str(e)}")
 
-# Load data
-items_catalog = load_json(ITEMS_FILE, {})
-coupons = load_json(COUPONS_FILE, {})
-passes_catalog = load_json(PASSES_FILE, {})
-user_data = load_json(USER_DATA_FILE, {})
-seguros = load_json(SEGUROS_FILE, {})
-compras = load_json(COMPRAS_FILE, {})  # NEW: Load compras.json
-save_list_to_txt(ITEMS_LIST_TXT, items_catalog)
-save_list_to_txt(PASSES_LIST_TXT, passes_catalog)
+async def load_list_from_mongodb(list_type):
+    """Load sales list content from MongoDB"""
+    try:
+        data = await load_from_mongodb('sales_lists')
+        if list_type in data:
+            return data[list_type].get('content', '')
+        return None
+    except Exception as e:
+        logger.error(f"Error loading list from MongoDB: {str(e)}")
+        return None
+
+# Initialize data dictionaries (will be loaded from MongoDB on bot startup)
+items_catalog = {}
+coupons = {}
+passes_catalog = {}
+user_data = {}
+seguros = {}
+compras = {}
+
+# Function to load all data from MongoDB
+async def load_all_data():
+    """Load all data from MongoDB into memory"""
+    global items_catalog, coupons, passes_catalog, user_data, seguros, compras
+    try:
+        items_catalog = await load_from_mongodb('items_catalog')
+        coupons = await load_from_mongodb('coupons')
+        passes_catalog = await load_from_mongodb('battle_passes')
+        
+        # Load user_data and extract steam_id values
+        user_data_raw = await load_from_mongodb('user_data')
+        user_data = {k: v.get('steam_id', v) if isinstance(v, dict) else v for k, v in user_data_raw.items()}
+        
+        # Load seguros and extract count values
+        seguros_raw = await load_from_mongodb('seguros')
+        seguros = {k: v.get('count', v) if isinstance(v, dict) else v for k, v in seguros_raw.items()}
+        
+        compras = await load_from_mongodb('compras')
+        logger.info(f"Loaded from MongoDB: {len(items_catalog)} items, {len(coupons)} coupons, {len(passes_catalog)} passes")
+        await save_list_to_txt(ITEMS_LIST_TXT, items_catalog)
+    except Exception as e:
+        logger.error(f"Error loading data from MongoDB: {str(e)}")
+        # Fallback to JSON files if MongoDB fails
+        items_catalog = load_json(ITEMS_FILE, {})
+        coupons = load_json(COUPONS_FILE, {})
+        passes_catalog = load_json(PASSES_FILE, {})
+        user_data = load_json(USER_DATA_FILE, {})
+        seguros = load_json(SEGUROS_FILE, {})
+        compras = load_json(COMPRAS_FILE, {})
+        await save_list_to_txt(ITEMS_LIST_TXT, items_catalog)
 
 # Automatic migration function: converts old items (with root 'script') to new format with 'variations'
-def migrate_items_to_variations():
+async def migrate_items_to_variations():
     migrated = False
     for iid, data in list(items_catalog.items()):
         if 'variations' not in data:
@@ -165,10 +295,9 @@ def migrate_items_to_variations():
                 except Exception as e:
                     logger.error(f"Error migrating item {iid}: {str(e)}")
     if migrated:
-        save_json(ITEMS_FILE, items_catalog)
-        logger.info("Migration to 'variations' executed and items_catalog saved.")
-# Execute migration right after defining the function
-migrate_items_to_variations()
+        await save_all_to_mongodb('items_catalog', items_catalog)
+        logger.info("Migration to 'variations' executed and items_catalog saved to MongoDB.")
+# Note: migrate_items_to_variations will be called after load_all_data in bot startup
 
 # Bot
 intents = discord.Intents.default()
@@ -502,16 +631,17 @@ class DeleteItemModal(Modal):
             await interaction.response.send_message("Invalid confirmation. Type 'YES' to delete.", ephemeral=True)
             return
         if self.item_id in items_catalog:
+            item_name = items_catalog[self.item_id].get('name', '')
             del items_catalog[self.item_id]
-            save_json(ITEMS_FILE, items_catalog)
-            save_list_to_txt(ITEMS_LIST_TXT, items_catalog)
+            await delete_from_mongodb('items_catalog', self.item_id)
+            await save_list_to_txt(ITEMS_LIST_TXT, items_catalog)
             sales_channel = bot.get_channel(SALES_CHANNEL_ID)
             if sales_channel:
                 async for message in sales_channel.history(limit=200):
-                    if message.author == bot.user and message.embeds and message.embeds[0].title == items_catalog.get(self.item_id, {}).get('name', ''):
+                    if message.author == bot.user and message.embeds and message.embeds[0].title == item_name:
                         await message.delete()
                         break
-            await interaction.response.send_message(f"✅ Item **{items_catalog.get(self.item_id, {}).get('name', '')}** deleted successfully.", ephemeral=True)
+            await interaction.response.send_message(f"✅ Item **{item_name}** deleted successfully.", ephemeral=True)
         else:
             await interaction.response.send_message("Item not found.", ephemeral=True)
 
@@ -528,7 +658,7 @@ class DeleteCouponModal(Modal):
             return
         if self.code in coupons:
             del coupons[self.code]
-            save_json(COUPONS_FILE, coupons)
+            await delete_from_mongodb('coupons', self.code)
             await interaction.response.send_message(f"✅ Coupon **{self.code}** deleted successfully.", ephemeral=True)
         else:
             await interaction.response.send_message("Coupon not found.", ephemeral=True)
@@ -547,8 +677,8 @@ class DeleteVehicleModal(Modal):
             return
         if self.item_id in items_catalog:
             del items_catalog[self.item_id]
-            save_json(ITEMS_FILE, items_catalog)
-            save_list_to_txt(ITEMS_LIST_TXT, items_catalog)
+            await delete_from_mongodb('items_catalog', self.item_id)
+            await save_list_to_txt(ITEMS_LIST_TXT, items_catalog)
             sales_channel = bot.get_channel(SALES_CHANNEL_ID)
             if sales_channel:
                 async for message in sales_channel.history(limit=200):
@@ -622,8 +752,8 @@ class CreateItemModal(Modal):
                 "variations": variations
             }
             items_catalog[item_id] = item_obj
-            save_json(ITEMS_FILE, items_catalog)
-            save_list_to_txt(ITEMS_LIST_TXT, items_catalog)
+            await save_to_mongodb('items_catalog', item_id, item_obj)
+            await save_list_to_txt(ITEMS_LIST_TXT, items_catalog)
             await interaction.response.send_message(f"✅ Item **{self.name.value}** created with ID `{item_id}`.", ephemeral=True)
         except Exception as e:
             await interaction.response.send_message(f"Error creating item: {str(e)}", ephemeral=True)
@@ -703,8 +833,8 @@ class EditItemModal(Modal):
                 "is_vehicle": is_vehicle,
                 "insurance_drops": drops
             }
-            save_json(ITEMS_FILE, items_catalog)
-            save_list_to_txt(ITEMS_LIST_TXT, items_catalog)
+            await save_to_mongodb('items_catalog', self.item_id, items_catalog[self.item_id])
+            await save_list_to_txt(ITEMS_LIST_TXT, items_catalog)
 
             sales_channel = bot.get_channel(SALES_CHANNEL_ID)
             if sales_channel:
@@ -746,7 +876,7 @@ class CreateCouponModal(Modal):
             if discount < 0 or discount > 100:
                 await interaction.response.send_message("Invalid discount.", ephemeral=True); return
             coupons[code] = {"discount": discount, "uses": uses}
-            save_json(COUPONS_FILE, coupons)
+            await save_to_mongodb('coupons', code, coupons[code])
             await interaction.response.send_message(f"✅ Coupon {code} created.", ephemeral=True)
         except Exception as e:
             await interaction.response.send_message(f"Error: {str(e)}", ephemeral=True)
@@ -767,7 +897,7 @@ class EditCouponModal(Modal):
             if discount < 0 or discount > 100:
                 await interaction.response.send_message("Invalid discount.", ephemeral=True); return
             coupons[self.code] = {"discount": discount, "uses": uses}
-            save_json(COUPONS_FILE, coupons)
+            await save_to_mongodb('coupons', self.code, coupons[self.code])
             await interaction.response.send_message(f"✅ Coupon {self.code} updated.", ephemeral=True)
         except Exception as e:
             await interaction.response.send_message(f"Error: {str(e)}", ephemeral=True)
@@ -776,6 +906,25 @@ class CouponSelectView(View):
     def __init__(self):
         super().__init__(timeout=60)
         self.message = None
+        # Build options dynamically
+        options = []
+        if coupons:
+            for code, data in coupons.items():
+                uses_text = 'unlimited' if data.get('uses', 0) == -1 else str(data.get('uses', 0))
+                label = f"{code} — {data.get('discount', 0)}% ({uses_text} uses)"
+                options.append(discord.SelectOption(label=label[:100], value=code))
+        else:
+            options = [discord.SelectOption(label="No coupons available", value="none")]
+        
+        if len(options) > 25:
+            options = options[:25]
+        
+        self.select_menu = discord.ui.Select(
+            placeholder="Choose a coupon to edit...",
+            options=options
+        )
+        self.select_menu.callback = self.select_coupon
+        self.add_item(self.select_menu)
 
     async def on_timeout(self):
         if self.message:
@@ -784,16 +933,11 @@ class CouponSelectView(View):
             except:
                 pass
 
-    @discord.ui.select(
-        placeholder="Choose a coupon to edit...",
-        options=[discord.SelectOption(label=f"{code} — {data.get('discount',0)}% ({'unlimited' if data.get('uses',0)==-1 else data.get('uses',0)} uses)", value=code)
-                 for code, data in coupons.items()] or [discord.SelectOption(label="No coupons available", value="none")]
-    )
-    async def select_coupon(self, interaction: discord.Interaction, select: discord.ui.Select):
-        if select.values[0] == "none":
+    async def select_coupon(self, interaction: discord.Interaction):
+        if self.select_menu.values[0] == "none":
             await interaction.response.send_message("No coupons available.", ephemeral=True)
             return
-        code = select.values[0]
+        code = self.select_menu.values[0]
         data = coupons.get(code, {})
         await interaction.response.send_modal(EditCouponModal(code, data))
 
@@ -871,8 +1015,8 @@ class CreateVehicleModal(Modal):
                 ]
             }
             items_catalog[item_id] = item_obj
-            save_json(ITEMS_FILE, items_catalog)
-            save_list_to_txt(ITEMS_LIST_TXT, items_catalog)
+            await save_to_mongodb('items_catalog', item_id, item_obj)
+            await save_list_to_txt(ITEMS_LIST_TXT, items_catalog)
             await interaction.response.send_message(f"✅ Vehicle **{self.name.value}** created with ID `{item_id}`.", ephemeral=True)
         except Exception as e:
             await interaction.response.send_message(f"Error creating vehicle: {str(e)}", ephemeral=True)
@@ -888,7 +1032,7 @@ class VincularSteamModal(Modal):
         if not validate_steam_id(steam):
             await interaction.response.send_message("Invalid SteamID.", ephemeral=True); return
         user_data[str(interaction.user.id)] = steam
-        save_json(USER_DATA_FILE, user_data)
+        await save_to_mongodb('user_data', str(interaction.user.id), {"steam_id": steam})
         await interaction.response.send_message("✅ SteamID linked (used for insurance).", ephemeral=True)
 
 class PurchaseSteamModal(Modal):
@@ -987,7 +1131,7 @@ class PurchaseSteamModal(Modal):
             if success:
                 if applied_coupon and coupons[applied_coupon]['uses'] > 0:
                     coupons[applied_coupon]['uses'] -= 1
-                    save_json(COUPONS_FILE, coupons)
+                    await save_to_mongodb('coupons', applied_coupon, coupons[applied_coupon])
                 # Registrar seguros se aplicável
                 is_vehicle = False
                 drops = 0
@@ -996,7 +1140,7 @@ class PurchaseSteamModal(Modal):
                     drops = int(variation.get('insurance_drops', self.item_data.get('insurance_drops', 0) or 0))
                 if insurance_choice and is_vehicle and drops > 0:
                     seguros[steam_target] = seguros.get(steam_target, 0) + drops
-                    save_json(SEGUROS_FILE, seguros)
+                    await save_to_mongodb('seguros', steam_target, {"count": seguros[steam_target]})
                     compra_id = generate_unique_id("compra")
                     compras[compra_id] = {
                         "user_id": str(interaction.user.id),
@@ -1005,7 +1149,7 @@ class PurchaseSteamModal(Modal):
                         "item_name": self.item_data.get("name"),
                         "drops": drops
                     }
-                    save_json(COMPRAS_FILE, compras)
+                    await save_to_mongodb('compras', compra_id, compras[compra_id])
                 await interaction.followup.send("✅ Free item delivered successfully! Use the insurance channel to activate.", ephemeral=True)
             else:
                 await interaction.followup.send("Error delivering free item.", ephemeral=True)
@@ -1111,7 +1255,7 @@ class PurchaseSteamModal(Modal):
                                     "item_name": self.item_data.get("name"),
                                     "drops": drops
                                 }
-                                save_json(COMPRAS_FILE, compras)
+                                await save_to_mongodb('compras', compra_id, compras[compra_id])
                                 logger.info(f"Purchase registered: {compra_id} for user {interaction.user.id}, SteamID {self.steam_target}")
                             await interaction.response.send_message("✅ Payment approved and item delivered! Use the insurance channel to activate.", ephemeral=True)
                         else:
@@ -1165,7 +1309,7 @@ class PurchaseSteamModal(Modal):
                     pass
                 if is_vehicle and drops > 0:
                     seguros[steam_target] = seguros.get(steam_target, 0) + drops
-                    save_json(SEGUROS_FILE, seguros)
+                    await save_to_mongodb('seguros', steam_target, {"count": seguros[steam_target]})
                     await thread.send(f"✅ Insurance contracted! {drops} insurance(s) added for SteamID `{steam_target}`. Use the insurance channel to activate.")
 
             await interaction.followup.send(f"✅ Order created. Check the thread: {thread.mention}", ephemeral=True)
@@ -1221,9 +1365,9 @@ class SegurosView(View):
                 success = FTPManager.update_player_file(steam, item_list=script_data.get('itemsToGive', []) or None, item_name=script_data.get('itemToGive'))
                 if success:
                     seguros[steam] = max(0, seguros.get(steam, 0) - 1)
-                    save_json(SEGUROS_FILE, seguros)
+                    await save_to_mongodb('seguros', steam, {"count": seguros[steam]})
                     compras[compra_id]["drops"] = max(0, compras[compra_id]["drops"] - 1)  # NEW: Reduce drops in purchase
-                    save_json(COMPRAS_FILE, compras)
+                    await save_to_mongodb('compras', compra_id, compras[compra_id])
                     logger.info(f"Insurance activated successfully for SteamID {steam}. Remaining insurance: {seguros.get(steam, 0)}")
                     with open(SEGUROS_LOG, 'a', encoding='utf-8') as f:
                         f.write(f"{datetime.now().isoformat()} - Insurance activated by {interaction2.user.id} for SteamID {steam} - Item {item_data.get('name')}\n")
@@ -1238,6 +1382,27 @@ class ItemSelectView(View):
     def __init__(self):
         super().__init__(timeout=60)
         self.message = None
+        # Build options dynamically with current items_catalog
+        options = []
+        if items_catalog:
+            for item_id, data in items_catalog.items():
+                options.append(discord.SelectOption(
+                    label=data.get('name', 'Unknown Item')[:100],  # Discord limit
+                    value=item_id
+                ))
+        else:
+            options = [discord.SelectOption(label="No items available", value="none")]
+        
+        # Limit to 25 options (Discord limit)
+        if len(options) > 25:
+            options = options[:25]
+        
+        self.select_menu = discord.ui.Select(
+            placeholder="Choose an item to edit...",
+            options=options
+        )
+        self.select_menu.callback = self.select_item
+        self.add_item(self.select_menu)
 
     async def on_timeout(self):
         if self.message:
@@ -1246,16 +1411,11 @@ class ItemSelectView(View):
             except:
                 pass
 
-    @discord.ui.select(
-        placeholder="Choose an item to edit...",
-        options=[discord.SelectOption(label=data.get('name', 'Unknown Item'), value=item_id)
-                 for item_id, data in items_catalog.items()] or [discord.SelectOption(label="No items available", value="none")]
-    )
-    async def select_item(self, interaction: discord.Interaction, select: discord.ui.Select):
-        if select.values[0] == "none":
+    async def select_item(self, interaction: discord.Interaction):
+        if self.select_menu.values[0] == "none":
             await interaction.response.send_message("No items available for editing.", ephemeral=True)
             return
-        item_id = select.values[0]
+        item_id = self.select_menu.values[0]
         item_data = items_catalog.get(item_id, {})
         if not item_data:
             await interaction.response.send_message("Item not found.", ephemeral=True)
@@ -1266,6 +1426,26 @@ class ItemDeleteSelectView(View):
     def __init__(self):
         super().__init__(timeout=60)
         self.message = None
+        # Build options dynamically
+        options = []
+        if items_catalog:
+            for item_id, data in items_catalog.items():
+                options.append(discord.SelectOption(
+                    label=data.get('name', 'Unknown Item')[:100],
+                    value=item_id
+                ))
+        else:
+            options = [discord.SelectOption(label="No items available", value="none")]
+        
+        if len(options) > 25:
+            options = options[:25]
+        
+        self.select_menu = discord.ui.Select(
+            placeholder="Choose an item to delete...",
+            options=options
+        )
+        self.select_menu.callback = self.select_item
+        self.add_item(self.select_menu)
 
     async def on_timeout(self):
         if self.message:
@@ -1274,16 +1454,11 @@ class ItemDeleteSelectView(View):
             except:
                 pass
 
-    @discord.ui.select(
-        placeholder="Choose an item to delete...",
-        options=[discord.SelectOption(label=data.get('name', 'Unknown Item'), value=item_id)
-                 for item_id, data in items_catalog.items()] or [discord.SelectOption(label="No items available", value="none")]
-    )
-    async def select_item(self, interaction: discord.Interaction, select: discord.ui.Select):
-        if select.values[0] == "none":
+    async def select_item(self, interaction: discord.Interaction):
+        if self.select_menu.values[0] == "none":
             await interaction.response.send_message("No items available for deletion.", ephemeral=True)
             return
-        item_id = select.values[0]
+        item_id = self.select_menu.values[0]
         item_data = items_catalog.get(item_id, {})
         if not item_data:
             await interaction.response.send_message("Item not found.", ephemeral=True)
@@ -1294,6 +1469,23 @@ class CouponDeleteSelectView(View):
     def __init__(self):
         super().__init__(timeout=60)
         self.message = None
+        # Build options dynamically
+        options = []
+        if coupons:
+            for code in coupons.keys():
+                options.append(discord.SelectOption(label=code[:100], value=code))
+        else:
+            options = [discord.SelectOption(label="No coupons available", value="none")]
+        
+        if len(options) > 25:
+            options = options[:25]
+        
+        self.select_menu = discord.ui.Select(
+            placeholder="Choose a coupon to delete...",
+            options=options
+        )
+        self.select_menu.callback = self.select_coupon
+        self.add_item(self.select_menu)
 
     async def on_timeout(self):
         if self.message:
@@ -1302,16 +1494,11 @@ class CouponDeleteSelectView(View):
             except:
                 pass
 
-    @discord.ui.select(
-        placeholder="Choose a coupon to delete...",
-        options=[discord.SelectOption(label=code, value=code)
-                 for code in coupons.keys()] or [discord.SelectOption(label="No coupons available", value="none")]
-    )
-    async def select_coupon(self, interaction: discord.Interaction, select: discord.ui.Select):
-        if select.values[0] == "none":
+    async def select_coupon(self, interaction: discord.Interaction):
+        if self.select_menu.values[0] == "none":
             await interaction.response.send_message("No coupons available for deletion.", ephemeral=True)
             return
-        code = select.values[0]
+        code = self.select_menu.values[0]
         await interaction.response.send_modal(DeleteCouponModal(code))
 
 class PassDeleteSelectView(View):
@@ -1359,6 +1546,27 @@ class VehicleDeleteSelectView(View):
     def __init__(self):
         super().__init__(timeout=60)
         self.message = None
+        # Build options dynamically for vehicles only
+        options = []
+        for item_id, data in items_catalog.items():
+            if data.get('vehicle_type') == 'spawn_vehicle':
+                options.append(discord.SelectOption(
+                    label=data.get('name', 'Unknown Vehicle')[:100],
+                    value=item_id
+                ))
+        
+        if not options:
+            options = [discord.SelectOption(label="No vehicles available", value="none")]
+        
+        if len(options) > 25:
+            options = options[:25]
+        
+        self.select_menu = discord.ui.Select(
+            placeholder="Choose a vehicle to delete...",
+            options=options
+        )
+        self.select_menu.callback = self.select_vehicle
+        self.add_item(self.select_menu)
 
     async def on_timeout(self):
         if self.message:
@@ -1367,17 +1575,11 @@ class VehicleDeleteSelectView(View):
             except:
                 pass
 
-    @discord.ui.select(
-        placeholder="Choose a vehicle to delete...",
-        options=[discord.SelectOption(label=data.get('name', 'Unknown Vehicle'), value=item_id)
-                 for item_id, data in items_catalog.items() if data.get('vehicle_type') == 'spawn_vehicle']
-                 or [discord.SelectOption(label="No vehicles available", value="none")]
-    )
-    async def select_vehicle(self, interaction: discord.Interaction, select: discord.ui.Select):
-        if select.values[0] == "none":
+    async def select_vehicle(self, interaction: discord.Interaction):
+        if self.select_menu.values[0] == "none":
             await interaction.response.send_message("No vehicles available for deletion.", ephemeral=True)
             return
-        item_id = select.values[0]
+        item_id = self.select_menu.values[0]
         item_data = items_catalog.get(item_id, {})
         if not item_data or item_data.get('vehicle_type') != 'spawn_vehicle':
             await interaction.response.send_message("Vehicle not found.", ephemeral=True)
@@ -1482,7 +1684,7 @@ async def process_approved_payment(interaction, item_id, item_type, steam_id, co
         # Decrease coupon uses if applied
         if coupon_code and coupon_code in coupons and coupons[coupon_code]['uses'] > 0:
             coupons[coupon_code]['uses'] -= 1
-            save_json(COUPONS_FILE, coupons)
+            await save_to_mongodb('coupons', coupon_code, coupons[coupon_code])
             logger.info(f"Coupon {coupon_code} used. {coupons[coupon_code]['uses']} remaining")
 
         # Notify sales channel
@@ -1553,8 +1755,91 @@ class ItemViewForChannel(View):
             modal = PurchaseSteamModal(self.item_id, 'item' if self.item_id in items_catalog else 'pass', self.item_data, variation_index=0)
             await interaction.response.send_modal(modal)
 
+async def send_control_panel_info():
+    """Send admin control panel information to dedicated channel"""
+    try:
+        control_channel = bot.get_channel(CONTROL_PANEL_CHANNEL_ID)
+        if not control_channel:
+            logger.error(f"Control Panel Channel ID {CONTROL_PANEL_CHANNEL_ID} not found")
+            return
+        
+        # Delete all messages in the channel
+        try:
+            await control_channel.purge(limit=100)
+            logger.info("Control panel channel cleared")
+        except Exception as e:
+            logger.error(f"Error clearing control panel channel: {str(e)}")
+        
+        # Create main embed with bot information
+        embed_main = discord.Embed(
+            title="🎮 Admin Control Panel",
+            description="Welcome to the DayZ Store Bot Admin Control Panel",
+            color=discord.Color.blue()
+        )
+        embed_main.add_field(
+            name="📊 Bot Status",
+            value=f"✅ Online and Ready\n🤖 Bot: {bot.user.name}\n🆔 ID: {bot.user.id}",
+            inline=False
+        )
+        embed_main.set_thumbnail(url=bot.user.display_avatar.url if bot.user.display_avatar else None)
+        embed_main.timestamp = datetime.now()
+        await control_channel.send(embed=embed_main)
+        
+        # Commands embed
+        embed_commands = discord.Embed(
+            title="📝 Available Admin Commands",
+            description="List of all commands you can use",
+            color=discord.Color.green()
+        )
+        embed_commands.add_field(
+            name="!c",
+            value="Open the configuration panel with all management buttons",
+            inline=False
+        )
+        embed_commands.add_field(
+            name="!store",
+            value="Send the store catalog via DM to the user",
+            inline=False
+        )
+        await control_channel.send(embed=embed_commands)
+        
+        # Statistics embed
+        embed_stats = discord.Embed(
+            title="📈 Current Statistics",
+            description="Overview of store data",
+            color=discord.Color.purple()
+        )
+        embed_stats.add_field(
+            name="🛒 Items",
+            value=f"{len(items_catalog)} items in catalog",
+            inline=True
+        )
+        embed_stats.add_field(
+            name="🎫 Coupons",
+            value=f"{len(coupons)} active coupons",
+            inline=True
+        )
+        embed_stats.add_field(
+            name="🛡️ Insurance",
+            value=f"{len(seguros)} active insurances",
+            inline=True
+        )
+        await control_channel.send(embed=embed_stats)
+        
+        logger.info("Control panel information sent successfully")
+    except Exception as e:
+        logger.error(f"Error sending control panel info: {str(e)}")
+
 @bot.event
 async def on_ready():
+    # Load all data from MongoDB first
+    await load_all_data()
+    # Run migration if needed
+    await migrate_items_to_variations()
+    
+    # Send control panel information
+    await send_control_panel_info()
+    
     logger.info(f"Bot connected as {bot.user.name} (ID: {bot.user.id})")
     logger.info(f"Admin ID: {ADMIN_ID}")
     sales_channel = bot.get_channel(SALES_CHANNEL_ID)
@@ -1616,7 +1901,7 @@ async def vincular_command(ctx, steam_id: str = None):
         if not validate_steam_id(steam_id):
             await ctx.send("Invalid SteamID."); return
         user_data[str(ctx.author.id)] = steam_id
-        save_json(USER_DATA_FILE, user_data)
+        await save_to_mongodb('user_data', str(ctx.author.id), {"steam_id": steam_id})
         await ctx.send("✅ SteamID linked.")
     else:
         await ctx.send("Usage: !vincular <steamid64>")
@@ -1626,7 +1911,7 @@ async def desvincular_command(ctx):
     uid = str(ctx.author.id)
     if uid in user_data:
         removed = user_data.pop(uid)
-        save_json(USER_DATA_FILE, user_data)
+        await delete_from_mongodb('user_data', uid)
         await ctx.send(f"✅ Unlinked {removed}")
     else:
         await ctx.send("You don't have a linked SteamID.")

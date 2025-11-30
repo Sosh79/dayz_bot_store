@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 # Função para instalar dependências automaticamente
 def install_dependencies():
-    required = ['discord.py', 'python-dotenv', 'mercadopago', 'qrcode', 'pillow', 'aiohttp', 'validators']
+    required = ['discord.py', 'python-dotenv', 'mercadopago', 'qrcode', 'pillow', 'aiohttp', 'validators', 'pymongo', 'motor', 'paypalrestsdk', 'paramiko']
     installed = False
     
     logger.info("Verificando e instalando dependências necessárias...")
