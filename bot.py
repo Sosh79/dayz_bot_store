@@ -94,6 +94,7 @@ try:
     compras_collection = db['compras']
     pending_payments_collection = db['pending_payments']
     sales_lists_collection = db['sales_lists']  # New: For lista_itens and lista_passes
+    linked_players_collection = db['linked_players']  # New: For !p and !u commands
     logger.info("MongoDB connected successfully")
 except Exception as e:
     logger.error(f"Error connecting to MongoDB: {str(e)}")
@@ -1801,6 +1802,16 @@ async def send_control_panel_info():
             value="Send the store catalog via DM to the user",
             inline=False
         )
+        embed_commands.add_field(
+            name="!p <steam_id> <discord_id>",
+            value="Link a Steam ID with Discord ID and save to database",
+            inline=False
+        )
+        embed_commands.add_field(
+            name="!u",
+            value="List all linked players (Steam ID, Discord ID, Discord Name)",
+            inline=False
+        )
         await control_channel.send(embed=embed_commands)
         
         # Statistics embed
@@ -2052,6 +2063,126 @@ async def config_command(ctx):
     view.add_item(btn_delete_vehicle)
 
     await ctx.send("Configuration panel:", view=view, ephemeral=True)
+
+@bot.command(name="p")
+async def link_player(ctx, steam_id: str = None, discord_id: str = None):
+    """Link a Steam ID with Discord ID and save to database"""
+    if ctx.author.id != ADMIN_ID:
+        await ctx.send("You don't have permission."); return
+    
+    # Show usage if parameters are missing
+    if not steam_id or not discord_id:
+        usage_embed = discord.Embed(
+            title="📖 Command Usage: !p",
+            description="Link a Steam ID with Discord ID",
+            color=discord.Color.blue()
+        )
+        usage_embed.add_field(
+            name="Format",
+            value="`!p <steam_id> <discord_id>`",
+            inline=False
+        )
+        usage_embed.add_field(
+            name="Example",
+            value="`!p 76561198012345678 328736347298988032`",
+            inline=False
+        )
+        usage_embed.add_field(
+            name="Parameters",
+            value="• `steam_id`: The player's Steam ID (17 digits)\n• `discord_id`: The user's Discord ID (right-click user → Copy ID)",
+            inline=False
+        )
+        usage_embed.add_field(
+            name="What it does",
+            value="Saves the Steam ID, Discord ID, and Discord username to the database",
+            inline=False
+        )
+        await ctx.send(embed=usage_embed)
+        return
+    
+    try:
+        # Convert discord_id to int
+        discord_id_int = int(discord_id)
+        
+        # Get Discord user info
+        try:
+            discord_user = await bot.fetch_user(discord_id_int)
+            discord_name = discord_user.name
+        except:
+            discord_name = "Unknown User"
+        
+        # Save to MongoDB
+        player_data = {
+            'steam_id': steam_id,
+            'discord_id': str(discord_id_int),
+            'discord_name': discord_name,
+            'linked_at': datetime.now().isoformat()
+        }
+        
+        await save_to_mongodb('linked_players', steam_id, player_data)
+        
+        embed = discord.Embed(
+            title="✅ Player Linked Successfully",
+            color=discord.Color.green()
+        )
+        embed.add_field(name="Steam ID", value=steam_id, inline=False)
+        embed.add_field(name="Discord ID", value=discord_id, inline=False)
+        embed.add_field(name="Discord Name", value=discord_name, inline=False)
+        
+        await ctx.send(embed=embed)
+        logger.info(f"Linked player: {steam_id} -> {discord_id} ({discord_name})")
+        
+    except ValueError:
+        await ctx.send("❌ Invalid Discord ID. Must be a number.")
+    except Exception as e:
+        await ctx.send(f"❌ Error linking player: {str(e)}")
+        logger.error(f"Error linking player: {str(e)}")
+
+@bot.command(name="u")
+async def list_linked_players(ctx):
+    """List all linked players from database"""
+    if ctx.author.id != ADMIN_ID:
+        await ctx.send("You don't have permission."); return
+    
+    try:
+        # Load all linked players from MongoDB
+        linked_players = await load_from_mongodb('linked_players')
+        
+        if not linked_players:
+            await ctx.send("📋 No linked players found in database.")
+            return
+        
+        # Create embed
+        embed = discord.Embed(
+            title="📋 Linked Players List",
+            description=f"Total: {len(linked_players)} players",
+            color=discord.Color.blue()
+        )
+        
+        # Add players to embed (max 25 fields)
+        count = 0
+        for steam_id, data in linked_players.items():
+            if count >= 25:  # Discord embed limit
+                break
+            
+            discord_id = data.get('discord_id', 'N/A')
+            discord_name = data.get('discord_name', 'Unknown')
+            
+            embed.add_field(
+                name=f"🎮 {discord_name}",
+                value=f"Steam: `{steam_id}`\nDiscord: `{discord_id}`",
+                inline=True
+            )
+            count += 1
+        
+        if len(linked_players) > 25:
+            embed.set_footer(text=f"Showing 25 of {len(linked_players)} players")
+        
+        await ctx.send(embed=embed)
+        
+    except Exception as e:
+        await ctx.send(f"❌ Error retrieving linked players: {str(e)}")
+        logger.error(f"Error retrieving linked players: {str(e)}")
 
 @bot.command(name="limpar")
 async def limpar_command(ctx, steam_id: str):
