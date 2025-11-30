@@ -1691,6 +1691,47 @@ async def config_command(ctx):
     btn_vehicle.callback = cb_vehicle
     view.add_item(btn_vehicle)
 
+    # New button for Refresh Store
+    btn_refresh = Button(label="🔄 Refresh Store", style=discord.ButtonStyle.secondary)
+    async def cb_refresh(interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        sales_channel = bot.get_channel(SALES_CHANNEL_ID)
+        if not sales_channel:
+            await interaction.followup.send("Sales channel not found.", ephemeral=True)
+            return
+        try:
+            # Clear old bot messages
+            def is_bot_msg(m): return m.author == bot.user
+            deleted = await sales_channel.purge(limit=200, check=is_bot_msg)
+            logger.info(f"Deleted {len(deleted)} old messages from sales channel")
+            
+            # Resend all items
+            for item_id, data in items_catalog.items():
+                embed = discord.Embed(title=f"{data.get('name')}", description=data.get('description',''), color=discord.Color.green())
+                curr_symbol = '€' if PAYPAL_CURRENCY=='EUR' else PAYPAL_CURRENCY
+                embed.add_field(name="Price", value=f"{curr_symbol} {data.get('price',0.0):.2f}", inline=True)
+                if data.get('image_url'):
+                    embed.set_image(url=data.get('image_url'))
+                view_item = ItemViewForChannel(item_id, data)
+                await sales_channel.send(embed=embed, view=view_item)
+            
+            # Resend all passes
+            for pass_id, data in passes_catalog.items():
+                embed = discord.Embed(title=f"{data.get('name')}", description=data.get('description',''), color=discord.Color.gold())
+                curr_symbol = '€' if PAYPAL_CURRENCY=='EUR' else PAYPAL_CURRENCY
+                embed.add_field(name="Price", value=f"{curr_symbol} {data.get('price',0.0):.2f}", inline=True)
+                if data.get('image_url'):
+                    embed.set_image(url=data.get('image_url'))
+                view_pass = ItemViewForChannel(pass_id, data)
+                await sales_channel.send(embed=embed, view=view_pass)
+            
+            await interaction.followup.send(f"✅ Store refreshed! {len(items_catalog)} items and {len(passes_catalog)} passes displayed.", ephemeral=True)
+        except Exception as e:
+            logger.error(f"Error refreshing store: {str(e)}")
+            await interaction.followup.send(f"Error refreshing store: {str(e)}", ephemeral=True)
+    btn_refresh.callback = cb_refresh
+    view.add_item(btn_refresh)
+
     # Delete buttons
     btn_delete_item = Button(label="❌ Delete Item", style=discord.ButtonStyle.danger)
     async def cb_delete_item(interaction: discord.Interaction):
