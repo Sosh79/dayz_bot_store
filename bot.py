@@ -1038,6 +1038,116 @@ class CreateVehicleModal(Modal):
         except Exception as e:
             await interaction.response.send_message(f"Error creating vehicle: {str(e)}", ephemeral=True)
 
+class EditVehicleModal(Modal):
+    def __init__(self, vehicle_id: str, vehicle_data: dict):
+        super().__init__(title=f"Edit Vehicle: {vehicle_data.get('name', 'Vehicle')}")
+        self.vehicle_id = vehicle_id
+        
+        # Get current vehicle data
+        current_variation = vehicle_data.get('variations', [{}])[0]
+        current_script = current_variation.get('script', {})
+        
+        self.name = TextInput(
+            label="Vehicle Name",
+            default=vehicle_data.get('name', ''),
+            placeholder="Ex: RAM 1500 TRX Black",
+            required=True
+        )
+        currency_label = '€' if PAYPAL_CURRENCY == 'EUR' else PAYPAL_CURRENCY
+        self.price = TextInput(
+            label=f"Price ({currency_label})",
+            default=str(vehicle_data.get('price', 0.0)),
+            placeholder="Ex: 50.00",
+            required=True
+        )
+        self.description = TextInput(
+            label="Description (optional)",
+            default=vehicle_data.get('description', ''),
+            placeholder="Ex: Powerful off-road vehicle",
+            style=discord.TextStyle.paragraph,
+            required=False,
+            max_length=1024
+        )
+        self.class_name = TextInput(
+            label="Vehicle Class Name",
+            default=current_script.get('vehicleClassName', ''),
+            placeholder="Ex: CrSk_RAM_1500_TRX_Black",
+            required=True
+        )
+        
+        # Format current config
+        current_config = f"{current_script.get('amountOfAvailableSpawns', 7)},{current_script.get('timeBeforeNextSpawn', 600)},{current_script.get('guaranteePeriod', 604800)}"
+        self.vehicle_config = TextInput(
+            label="Vehicle Config (spawns,cooldown,guarantee)",
+            default=current_config,
+            placeholder="Ex: 7,600,604800",
+            required=True
+        )
+        
+        self.add_item(self.name)
+        self.add_item(self.price)
+        self.add_item(self.description)
+        self.add_item(self.class_name)
+        self.add_item(self.vehicle_config)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            price = float(self.price.value.replace(',', '.'))
+            if price < 0:
+                await interaction.response.send_message("Price cannot be negative.", ephemeral=True)
+                return
+            
+            class_name = self.class_name.value.strip()
+            if not class_name:
+                await interaction.response.send_message("Vehicle class name is required.", ephemeral=True)
+                return
+            
+            # Parse vehicle config
+            config_parts = [p.strip() for p in self.vehicle_config.value.split(',')]
+            if len(config_parts) != 3:
+                await interaction.response.send_message("Invalid vehicle config format. Use: spawns,cooldown,guarantee", ephemeral=True)
+                return
+            
+            try:
+                spawns = int(config_parts[0])
+                cooldown = int(config_parts[1])
+                guarantee = int(config_parts[2])
+            except ValueError:
+                await interaction.response.send_message("Vehicle config must be numbers.", ephemeral=True)
+                return
+            
+            # Update vehicle data
+            item_obj = {
+                "name": self.name.value,
+                "description": self.description.value if self.description.value else "",
+                "price": price,
+                "image_url": "",
+                "is_vehicle": True,
+                "vehicle_type": "spawn_vehicle",
+                "insurance_drops": 0,
+                "variations": [
+                    {
+                        "name": "Default",
+                        "script": {
+                            "vehicleClassName": class_name,
+                            "amountOfAvailableSpawns": spawns,
+                            "timeBeforeNextSpawn": cooldown,
+                            "guaranteePeriod": guarantee,
+                            "isUnique": True
+                        },
+                        "image_url": "",
+                        "is_vehicle": True,
+                        "insurance_drops": 0
+                    }
+                ]
+            }
+            items_catalog[self.vehicle_id] = item_obj
+            await save_to_mongodb('items_catalog', self.vehicle_id, item_obj)
+            await save_list_to_txt(ITEMS_LIST_TXT, items_catalog)
+            await interaction.response.send_message(f"✅ Vehicle **{self.name.value}** updated successfully.", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"Error updating vehicle: {str(e)}", ephemeral=True)
+
 class VincularSteamModal(Modal):
     def __init__(self):
         super().__init__(title="Link SteamID (insurance)")
@@ -1337,15 +1447,19 @@ class ItemSelectView(View):
     def __init__(self):
         super().__init__(timeout=60)
         self.message = None
-        # Build options dynamically with current items_catalog
+        # Build options dynamically - only non-vehicle items
         options = []
         if items_catalog:
             for item_id, data in items_catalog.items():
+                # Skip vehicles
+                if data.get('vehicle_type') == 'spawn_vehicle' or data.get('is_vehicle', False):
+                    continue
                 options.append(discord.SelectOption(
                     label=data.get('name', 'Unknown Item')[:100],  # Discord limit
                     value=item_id
                 ))
-        else:
+        
+        if not options:
             options = [discord.SelectOption(label="No items available", value="none")]
         
         # Limit to 25 options (Discord limit)
@@ -1381,15 +1495,19 @@ class ItemDeleteSelectView(View):
     def __init__(self):
         super().__init__(timeout=60)
         self.message = None
-        # Build options dynamically
+        # Build options dynamically - only non-vehicle items
         options = []
         if items_catalog:
             for item_id, data in items_catalog.items():
+                # Skip vehicles
+                if data.get('vehicle_type') == 'spawn_vehicle' or data.get('is_vehicle', False):
+                    continue
                 options.append(discord.SelectOption(
                     label=data.get('name', 'Unknown Item')[:100],
                     value=item_id
                 ))
-        else:
+        
+        if not options:
             options = [discord.SelectOption(label="No items available", value="none")]
         
         if len(options) > 25:
@@ -1496,6 +1614,50 @@ class SaldoDeleteSelectView(View):
     )
     async def select_saldo(self, interaction: discord.Interaction, select: discord.ui.Select):
         await interaction.response.send_message("Balance deletion disabled.", ephemeral=True)
+
+class VehicleSelectView(View):
+    def __init__(self):
+        super().__init__(timeout=60)
+        self.message = None
+        # Build options dynamically for vehicles only
+        options = []
+        for item_id, data in items_catalog.items():
+            if data.get('vehicle_type') == 'spawn_vehicle':
+                options.append(discord.SelectOption(
+                    label=data.get('name', 'Unknown Vehicle')[:100],
+                    value=item_id
+                ))
+        
+        if not options:
+            options = [discord.SelectOption(label="No vehicles available", value="none")]
+        
+        if len(options) > 25:
+            options = options[:25]
+        
+        self.select_menu = discord.ui.Select(
+            placeholder="Choose a vehicle to edit...",
+            options=options
+        )
+        self.select_menu.callback = self.select_vehicle
+        self.add_item(self.select_menu)
+
+    async def on_timeout(self):
+        if self.message:
+            try:
+                await self.message.edit(content="⏳ Vehicle selection expired.", view=None)
+            except:
+                pass
+
+    async def select_vehicle(self, interaction: discord.Interaction):
+        if self.select_menu.values[0] == "none":
+            await interaction.response.send_message("No vehicles available for editing.", ephemeral=True)
+            return
+        item_id = self.select_menu.values[0]
+        item_data = items_catalog.get(item_id, {})
+        if not item_data or item_data.get('vehicle_type') != 'spawn_vehicle':
+            await interaction.response.send_message("Vehicle not found.", ephemeral=True)
+            return
+        await interaction.response.send_modal(EditVehicleModal(item_id, item_data))
 
 class VehicleDeleteSelectView(View):
     def __init__(self):
@@ -1975,7 +2137,10 @@ async def config_command(ctx):
     view.add_item(btn_edit_coupon)
     btn_edit_item = Button(label="✏️ Edit Item", style=discord.ButtonStyle.blurple)
     async def cb_edit_item(interaction: discord.Interaction):
-        if not items_catalog:
+        # Check if there are non-vehicle items
+        has_items = any(not (data.get('vehicle_type') == 'spawn_vehicle' or data.get('is_vehicle', False)) 
+                       for data in items_catalog.values())
+        if not has_items:
             await interaction.response.send_message("No items available for editing.", ephemeral=True)
             return
         select_view = ItemSelectView()
@@ -1990,6 +2155,20 @@ async def config_command(ctx):
         await interaction.response.send_modal(CreateVehicleModal())
     btn_vehicle.callback = cb_vehicle
     view.add_item(btn_vehicle)
+    
+    # New button for Edit Vehicle
+    btn_edit_vehicle = Button(label="✏️ Edit Vehicle", style=discord.ButtonStyle.blurple)
+    async def cb_edit_vehicle(interaction: discord.Interaction):
+        # Check if there are vehicles
+        has_vehicles = any(data.get('vehicle_type') == 'spawn_vehicle' for data in items_catalog.values())
+        if not has_vehicles:
+            await interaction.response.send_message("No vehicles available for editing.", ephemeral=True)
+            return
+        select_view = VehicleSelectView()
+        message = await interaction.response.send_message("Select a vehicle to edit:", view=select_view, ephemeral=True)
+        select_view.message = message
+    btn_edit_vehicle.callback = cb_edit_vehicle
+    view.add_item(btn_edit_vehicle)
 
     # New button for Refresh Store
     btn_refresh = Button(label="🔄 Refresh Store", style=discord.ButtonStyle.secondary)
