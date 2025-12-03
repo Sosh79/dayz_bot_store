@@ -39,7 +39,6 @@ FTP_PORT = os.getenv('FTP_PORT', '21')
 FTP_USER = os.getenv('FTP_USER')
 FTP_PASS = os.getenv('FTP_PASS')
 FTP_BASE_PATH = os.getenv('FTP_BASE_PATH')
-SEGUROS_CHANNEL_ID = int(os.getenv('SEGUROS_CHANNEL_ID') or '0')
 GUILD_ID = int(os.getenv('GUILD_ID') or '0')
 PELTCURRENCY_PATH = os.getenv('PELTCURRENCY_PATH')
 CAC_ROLE_ID = int(os.getenv('CAC_ROLE_ID') or '0')
@@ -63,8 +62,6 @@ if USE_LOCAL and not LOCAL_BASE_PATH:
     print("Error: LOCAL_BASE_PATH not defined in .env (required when USE_LOCAL=true)"); sys.exit(1)
 if not USE_LOCAL and (not FTP_HOST or not FTP_BASE_PATH):
     print("Error: FTP_HOST and FTP_BASE_PATH are required when USE_LOCAL=false"); sys.exit(1)
-if not SEGUROS_CHANNEL_ID:
-    print("Error: SEGUROS_CHANNEL_ID not defined in .env"); sys.exit(1)
 if not BANKING_PATH:  # New: Validate BANKING_PATH
     print("Error: BANKING_PATH not defined in .env"); sys.exit(1)
 if USE_LOCAL and not os.path.exists(BANKING_PATH):
@@ -95,6 +92,7 @@ try:
     pending_payments_collection = db['pending_payments']
     sales_lists_collection = db['sales_lists']  # New: For lista_itens and lista_passes
     linked_players_collection = db['linked_players']  # New: For !p and !u commands
+    purchases_collection = db['purchases']  # New: For complete purchase records
     logger.info("MongoDB connected successfully")
 except Exception as e:
     logger.error(f"Error connecting to MongoDB: {str(e)}")
@@ -1317,68 +1315,6 @@ class PurchaseSteamModal(Modal):
         else:
             logger.error(f"Error creating payment: {payment_result.get('message')}")
             await interaction.followup.send(f"Error creating payment: {payment_result.get('message')}", ephemeral=True)
-
-# NEW: View for insurance channel
-class SegurosView(View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.button(label="🚗 Activate Insurance", style=discord.ButtonStyle.secondary)
-    async def acionar_seguro(self, interaction: discord.Interaction, button: Button):
-        class AcionarSeguroModal(Modal):
-            def __init__(self):
-                super().__init__(title="Activate Insurance - Enter SteamID")
-                self.steam = TextInput(label="SteamID64", placeholder="SteamID to receive vehicle", required=True)
-                self.add_item(self.steam)
-
-            async def on_submit(self, interaction2: discord.Interaction):
-                steam = self.steam.value.strip()
-                logger.info(f"Attempt to activate insurance for SteamID {steam} by {interaction2.user.id}")
-                if not validate_steam_id(steam):
-                    logger.error(f"Invalid SteamID provided: {steam}")
-                    await interaction2.response.send_message("Invalid SteamID.", ephemeral=True)
-                    return
-                qtd = seguros.get(steam, 0)
-                if qtd <= 0:
-                    logger.error(f"No insurance available for SteamID {steam}")
-                    await interaction2.response.send_message("No insurance available for this SteamID.", ephemeral=True)
-                    return
-                # NEW: Verify if user is the buyer
-                user_id = str(interaction2.user.id)
-                compra_id = None
-                item_data = None
-                for cid, compra in compras.items():
-                    if compra["steam_id"] == steam and compra["user_id"] == user_id and compra["drops"] > 0:
-                        compra_id = cid
-                        item_data = items_catalog.get(compra["item_id"], {})
-                        break
-                if not item_data or not item_data.get("is_vehicle", False):
-                    logger.error(f"User {user_id} is not the buyer or item is not a vehicle for SteamID {steam}")
-                    await interaction2.response.send_message("You are not the buyer of this insurance or the item is not a vehicle.", ephemeral=True)
-                    return
-                try:
-                    script_data = json.loads(item_data.get('script', '{}'))
-                    logger.info(f"JSON script loaded for item {item_data.get('name')}: {script_data}")
-                except Exception as e:
-                    logger.error(f"Error parsing JSON script: {str(e)}")
-                    await interaction2.response.send_message("Invalid item script.", ephemeral=True)
-                    return
-                success = FTPManager.update_player_file(steam, item_list=script_data.get('itemsToGive', []) or None, item_name=script_data.get('itemToGive'))
-                if success:
-                    seguros[steam] = max(0, seguros.get(steam, 0) - 1)
-                    await save_to_mongodb('seguros', steam, {"count": seguros[steam]})
-                    compras[compra_id]["drops"] = max(0, compras[compra_id]["drops"] - 1)  # NEW: Reduce drops in purchase
-                    await save_to_mongodb('compras', compra_id, compras[compra_id])
-                    logger.info(f"Insurance activated successfully for SteamID {steam}. Remaining insurance: {seguros.get(steam, 0)}")
-                    with open(SEGUROS_LOG, 'a', encoding='utf-8') as f:
-                        f.write(f"{datetime.now().isoformat()} - Insurance activated by {interaction2.user.id} for SteamID {steam} - Item {item_data.get('name')}\n")
-                    await interaction2.response.send_message("✅ Insurance activated. Vehicle dropped.", ephemeral=True)
-                else:
-                    logger.error(f"Failed to drop vehicle for SteamID {steam}")
-                    await interaction2.response.send_message("Error dropping vehicle.", ephemeral=True)
-        modal = AcionarSeguroModal()
-        await interaction.response.send_modal(modal)
-
 class ItemSelectView(View):
     def __init__(self):
         super().__init__(timeout=60)
@@ -1656,25 +1592,13 @@ async def process_approved_payment(interaction, item_id, item_type, steam_id, co
                     if items_to_give:
                         success = FTPManager.update_player_file(steam_id, item_list=items_to_give)
                     else:
-                        success = True  # Allow success if only banking
+                        success = True
             else:
                 items_to_give = script_data.get('itemsToGive', [])
                 if items_to_give:
                     success = FTPManager.update_player_file(steam_id, item_list=items_to_give)
                 else:
-                    success = True  # Allow success if only banking
-
-            # Add balance if "banking": true in script
-            if script_data.get('banking', False):
-                banking_amount = script_data.get('currencyAmount', 100000)  # Use currencyAmount if present, fallback to 100000
-                banking_success = FTPManager.update_banking_file(steam_id, banking_amount)
-                if not banking_success:
-                    logger.error("Failed to update banking balance")
-                    if interaction:
-                        await interaction.followup.send("Error adding balance.", ephemeral=True)
-                    return False
-                else:
-                    logger.info(f"Banking balance updated to {banking_amount} for {steam_id}")
+                    success = True
 
             if not success:
                 logger.error("Failed to deliver item via FTPManager")
@@ -1688,6 +1612,85 @@ async def process_approved_payment(interaction, item_id, item_type, steam_id, co
             await save_to_mongodb('coupons', coupon_code, coupons[coupon_code])
             logger.info(f"Coupon {coupon_code} used. {coupons[coupon_code]['uses']} remaining")
 
+        # Save purchase information to database
+        try:
+            purchase_id = generate_unique_id("purchase")
+            
+            # Get buyer information
+            buyer_info = {}
+            if interaction:
+                buyer_info = {
+                    'discord_id': str(interaction.user.id),
+                    'discord_name': interaction.user.name,
+                    'discord_display_name': interaction.user.display_name,
+                }
+            else:
+                buyer_info = {
+                    'discord_id': str(user_id),
+                    'discord_name': 'Unknown',
+                    'discord_display_name': 'Unknown',
+                }
+            
+            # Get variation name if applicable
+            variation_name = None
+            if item_type == 'item' and override_script:
+                variations = item_data.get('variations', [])
+                try:
+                    variation_name = variations[variation_index].get('name', f'Variation {variation_index}')
+                except:
+                    variation_name = None
+            
+            # Determine if it's a vehicle or item
+            delivery_type = 'vehicle' if (vehicle_type == 'spawn_vehicle' or item_data.get('is_vehicle', False)) else 'item'
+            
+            # Get delivered content based on type
+            if delivery_type == 'vehicle':
+                delivered_content = {
+                    'vehicle_class': script_data.get('vehicleClassName', ''),
+                    'spawns': script_data.get('amountOfAvailableSpawns', 1),
+                    'cooldown': script_data.get('timeBeforeNextSpawn', 600),
+                    'guarantee': script_data.get('guaranteePeriod', 604800),
+                    'is_unique': script_data.get('isUnique', True)
+                }
+            else:
+                delivered_content = {
+                    'items_delivered': script_data.get('itemsToGive', []) or ([script_data.get('itemToGive')] if script_data.get('itemToGive') else [])
+                }
+            
+            purchase_data = {
+                'purchase_id': purchase_id,
+                'timestamp': datetime.now().isoformat(),
+                'payment_id': payment_id,
+                'amount': amount,
+                'currency': PAYPAL_CURRENCY,
+                'item_info': {
+                    'item_id': item_id,
+                    'item_name': item_data.get('name', 'Unknown'),
+                    'delivery_type': delivery_type,
+                    'item_price': item_data.get('price', 0.0),
+                    'variation': variation_name,
+                    'vehicle_type': item_data.get('vehicle_type'),
+                    'is_vehicle': item_data.get('is_vehicle', False),
+                    'insurance_drops': item_data.get('insurance_drops', 0),
+                },
+                'buyer_info': buyer_info,
+                'delivery_info': {
+                    'steam_id': steam_id,
+                    **delivered_content
+                },
+                'coupon_info': {
+                    'coupon_code': coupon_code if coupon_code else None,
+                    'discount_applied': coupons.get(coupon_code, {}).get('discount', 0) if coupon_code else 0,
+                },
+                'status': 'completed'
+            }
+            
+            await save_to_mongodb('purchases', purchase_id, purchase_data)
+            logger.info(f"Purchase {purchase_id} saved to database")
+            
+        except Exception as e:
+            logger.error(f"Error saving purchase to database: {str(e)}")
+        
         # Notify sales channel
         sales_channel = bot.get_channel(SALES_CHANNEL_ID)
         if sales_channel:
@@ -1854,8 +1857,7 @@ async def on_ready():
     logger.info(f"Bot connected as {bot.user.name} (ID: {bot.user.id})")
     logger.info(f"Admin ID: {ADMIN_ID}")
     sales_channel = bot.get_channel(SALES_CHANNEL_ID)
-    seguros_channel = bot.get_channel(SEGUROS_CHANNEL_ID)  # NEW: Insurance channel
-    print(f"------\nBot {bot.user.name} is online!\nCommands: !c !vincular !desvincular !store\n------")
+    print(f"------\nBot {bot.user.name} is online!\nCommands: !c !store !p !u\n------")
     # Sales channel
     if sales_channel:
         try:
@@ -1888,22 +1890,6 @@ async def on_ready():
                 await sales_channel.send(embed=embed, view=view)
             except Exception as e:
                 logger.error(f"Error sending pass embed {pass_id}: {str(e)}")
-    # NEW: Configure insurance channel
-    if seguros_channel:
-        try:
-            def is_bot_msg(m): return m.author == bot.user
-            await seguros_channel.purge(limit=200, check=is_bot_msg)
-            logger.info("Old bot messages deleted from insurance channel.")
-            embed = discord.Embed(
-                title="🚗 Activate Insurance",
-                description="Click the button below to activate insurance for a purchased vehicle. You must be the original buyer and provide the SteamID used in the purchase.",
-                color=discord.Color.blue()
-            )
-            view = SegurosView()
-            await seguros_channel.send(embed=embed, view=view)
-            logger.info("Insurance activation embed sent to insurance channel.")
-        except Exception as e:
-            logger.error(f"Error configuring insurance channel: {str(e)}")
 
 # Prefix commands
 @bot.command(name="vincular")
