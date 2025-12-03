@@ -286,7 +286,7 @@ async def migrate_items_to_variations():
                     script_obj = data.get('script')
                     if isinstance(script_obj, str):
                         script_obj = json.loads(script_obj)
-                    items_catalog[iid]['variations'] = [{"name": "Default", "script": script_obj, "image_url": data.get('image_url', ''), "is_vehicle": data.get('is_vehicle', False), "insurance_drops": data.get('insurance_drops', 0)}]
+                    items_catalog[iid]['variations'] = [{"name": "Default", "script": script_obj, "image_url": data.get('image_url', ''), "is_vehicle": data.get('is_vehicle', False)}]
                     # remove legacy 'script' to avoid confusion
                     if 'script' in items_catalog[iid]:
                         del items_catalog[iid]['script']
@@ -555,7 +555,7 @@ class FTPManager:
 # PayPal helpers
 class PayPalPayment:
     @staticmethod
-    async def create_payment(amount: float, description: str, user_id: int, item_id: str, item_type: str, steam_target: str, insurance: bool, coupon_code: str = None):
+    async def create_payment(amount: float, description: str, user_id: int, item_id: str, item_type: str, steam_target: str, coupon_code: str = None):
         if amount <= 0:
             return {"status": "free", "message": "Free item"}
         try:
@@ -590,7 +590,7 @@ class PayPalPayment:
                     "item_id": item_id,
                     "type": item_type,
                     "steam_target": steam_target,
-                    "insurance": insurance,
+
                     "amount": amount,
                     "coupon": coupon_code
                 }
@@ -758,7 +758,6 @@ class CreateItemModal(Modal):
                 "price": price,
                 "image_url": self.image_url.value if self.image_url.value else "",
                 "is_vehicle": is_vehicle,
-                "insurance_drops": 0,
                 "variations": variations
             }
             items_catalog[item_id] = item_obj
@@ -799,9 +798,9 @@ class EditItemModal(Modal):
             required=True
         )
         self.vehicle_info = TextInput(
-            label="Vehicle and Insurance (ex: y,3)",
-            placeholder="Ex: y,3 (vehicle with 3 insurance) or n,0 (no vehicle)",
-            default=f"{'y' if item_data.get('is_vehicle', False) else 'n'},{item_data.get('insurance_drops', 0)}",
+            label="Is Vehicle? (y/n)",
+            placeholder="Ex: y (vehicle) or n (item)",
+            default='y' if item_data.get('is_vehicle', False) else 'n',
             required=False
         )
         self.add_item(self.name)
@@ -823,25 +822,17 @@ class EditItemModal(Modal):
                     await interaction.response.send_message("Each variation needs 'name' and 'script'.", ephemeral=True); return
 
             vi = self.vehicle_info.value.strip().lower()
-            is_vehicle = False
-            drops = 0
-            if vi:
-                parts = [p.strip() for p in vi.split(',') if p.strip() != '']
-                if parts:
-                    is_vehicle = parts[0] in ('s', 'y', 'sim', 'yes', '1', 'true')
-                    if len(parts) > 1:
-                        try:
-                            drops = int(parts[1])
-                        except:
-                            drops = 0
+            is_vehicle = vi == 'y'
+            if vi and vi not in ['y', 'n']:
+                await interaction.response.send_message("Invalid vehicle flag. Use 'y' or 'n'.", ephemeral=True)
+                return
 
             items_catalog[self.item_id] = {
                 "name": self.name.value,
                 "price": price,
                 "image_url": self.image_url.value,
                 "variations": variations,
-                "is_vehicle": is_vehicle,
-                "insurance_drops": drops
+                "is_vehicle": is_vehicle
             }
             await save_to_mongodb('items_catalog', self.item_id, items_catalog[self.item_id])
             await save_list_to_txt(ITEMS_LIST_TXT, items_catalog)
@@ -1014,7 +1005,6 @@ class CreateVehicleModal(Modal):
                 "image_url": "",
                 "is_vehicle": True,
                 "vehicle_type": "spawn_vehicle",  # Special marker for vehicle spawn system
-                "insurance_drops": 0,
                 "variations": [
                     {
                         "name": "Default",
@@ -1026,8 +1016,7 @@ class CreateVehicleModal(Modal):
                             "isUnique": True
                         },
                         "image_url": "",
-                        "is_vehicle": True,
-                        "insurance_drops": 0
+                        "is_vehicle": True
                     }
                 ]
             }
@@ -1124,7 +1113,6 @@ class EditVehicleModal(Modal):
                 "image_url": "",
                 "is_vehicle": True,
                 "vehicle_type": "spawn_vehicle",
-                "insurance_drops": 0,
                 "variations": [
                     {
                         "name": "Default",
@@ -1136,8 +1124,7 @@ class EditVehicleModal(Modal):
                             "isUnique": True
                         },
                         "image_url": "",
-                        "is_vehicle": True,
-                        "insurance_drops": 0
+                        "is_vehicle": True
                     }
                 ]
             }
@@ -1150,7 +1137,7 @@ class EditVehicleModal(Modal):
 
 class VincularSteamModal(Modal):
     def __init__(self):
-        super().__init__(title="Link SteamID (insurance)")
+        super().__init__(title="Link SteamID")
         self.steam_id = TextInput(label="SteamID64 (17 digits)", required=True)
         self.add_item(self.steam_id)
 
@@ -1160,7 +1147,7 @@ class VincularSteamModal(Modal):
             await interaction.response.send_message("Invalid SteamID.", ephemeral=True); return
         user_data[str(interaction.user.id)] = steam
         await save_to_mongodb('user_data', str(interaction.user.id), {"steam_id": steam})
-        await interaction.response.send_message("✅ SteamID linked (used for insurance).", ephemeral=True)
+        await interaction.response.send_message("✅ SteamID linked successfully.", ephemeral=True)
 
 class PurchaseSteamModal(Modal):
     def __init__(self, item_id: str, item_type: str, item_data: dict, variation_index: int = 0):
@@ -1171,28 +1158,7 @@ class PurchaseSteamModal(Modal):
         self.item_data = item_data
         self.variation_index = variation_index
         self.steam_id = TextInput(label="SteamID64 (destination)", required=True)
-        # Determine if insurance should be prompted: check variation or item flags
-        variation = None
-        if item_data.get('variations'):
-            try:
-                variation = item_data['variations'][variation_index]
-            except:
-                variation = item_data['variations'][0] if item_data['variations'] else None
-        is_vehicle = False
-        drops = int(item_data.get('insurance_drops', 0) or 0)
-        if variation:
-            is_vehicle = variation.get('is_vehicle', item_data.get('is_vehicle', False))
-            drops = int(variation.get('insurance_drops', drops) or drops)
-        else:
-            is_vehicle = item_data.get('is_vehicle', False)
-        # Only show insurance choice if vehicle and drops > 0
-        if is_vehicle and drops > 0:
-            self.insurance_choice = TextInput(label="Want insurance? (y/n)", default="n", required=False)
-            self.add_item(self.insurance_choice)
-        else:
-            # keep a hidden field by not adding; we'll assume default False later
-            self.insurance_choice = None
-
+        
         self.coupon_code = TextInput(
             label="Coupon code (optional)",
             required=False,
@@ -1207,9 +1173,7 @@ class PurchaseSteamModal(Modal):
             logger.error(f"Invalid SteamID provided: {steam_target}")
             await interaction.response.send_message("Invalid SteamID.", ephemeral=True)
             return
-        insurance_choice = False
-        if self.insurance_choice:
-            insurance_choice = self.insurance_choice.value.strip().lower() in ("s", "sim", "y", "yes", "1")
+        
         coupon_code = self.coupon_code.value.strip().upper() if self.coupon_code.value else None
 
         original_price = self.item_data.get('price', 0.0)
@@ -1259,25 +1223,8 @@ class PurchaseSteamModal(Modal):
                 if applied_coupon and coupons[applied_coupon]['uses'] > 0:
                     coupons[applied_coupon]['uses'] -= 1
                     await save_to_mongodb('coupons', applied_coupon, coupons[applied_coupon])
-                # Registrar seguros se aplicável
-                is_vehicle = False
-                drops = 0
-                if variation:
-                    is_vehicle = variation.get('is_vehicle', self.item_data.get('is_vehicle', False))
-                    drops = int(variation.get('insurance_drops', self.item_data.get('insurance_drops', 0) or 0))
-                if insurance_choice and is_vehicle and drops > 0:
-                    seguros[steam_target] = seguros.get(steam_target, 0) + drops
-                    await save_to_mongodb('seguros', steam_target, {"count": seguros[steam_target]})
-                    compra_id = generate_unique_id("compra")
-                    compras[compra_id] = {
-                        "user_id": str(interaction.user.id),
-                        "steam_id": steam_target,
-                        "item_id": self.item_id,
-                        "item_name": self.item_data.get("name"),
-                        "drops": drops
-                    }
-                    await save_to_mongodb('compras', compra_id, compras[compra_id])
-                await interaction.followup.send("✅ Free item delivered successfully! Use the insurance channel to activate.", ephemeral=True)
+                
+                await interaction.followup.send("✅ Free item delivered successfully!", ephemeral=True)
             else:
                 await interaction.followup.send("Error delivering free item.", ephemeral=True)
             return
@@ -1293,7 +1240,6 @@ class PurchaseSteamModal(Modal):
             item_id=self.item_id,
             item_type=self.item_type,
             steam_target=steam_target,
-            insurance=insurance_choice,
             coupon_code=applied_coupon
         )
         sales_channel = bot.get_channel(SALES_CHANNEL_ID)
@@ -1325,7 +1271,7 @@ class PurchaseSteamModal(Modal):
             embed.set_footer(text=f"Payment ID: {payment_id}")
 
             class ThreadPaymentView(View):
-                def __init__(self, thread_obj, payment_id, steam_target, item_id, item_type, item_data, insurance_choice, variation_index, override_script):
+                def __init__(self, thread_obj, payment_id, steam_target, item_id, item_type, item_data, variation_index, override_script):
                     super().__init__(timeout=None)
                     self.thread = thread_obj
                     self.payment_id = payment_id
@@ -1333,7 +1279,6 @@ class PurchaseSteamModal(Modal):
                     self.item_id = item_id
                     self.item_type = item_type
                     self.item_data = item_data
-                    self.insurance_choice = insurance_choice
                     self.variation_index = variation_index
                     self.override_script = override_script
 
@@ -1373,18 +1318,8 @@ class PurchaseSteamModal(Modal):
                                     drops = int(var.get('insurance_drops', self.item_data.get('insurance_drops', 0) or 0))
                             except:
                                 pass
-                            if self.insurance_choice and is_vehicle and drops > 0:
-                                compra_id = generate_unique_id("compra")
-                                compras[compra_id] = {
-                                    "user_id": str(interaction.user.id),
-                                    "steam_id": self.steam_target,
-                                    "item_id": self.item_id,
-                                    "item_name": self.item_data.get("name"),
-                                    "drops": drops
-                                }
-                                await save_to_mongodb('compras', compra_id, compras[compra_id])
-                                logger.info(f"Purchase registered: {compra_id} for user {interaction.user.id}, SteamID {self.steam_target}")
-                            await interaction.response.send_message("✅ Payment approved and item delivered! Use the insurance channel to activate.", ephemeral=True)
+                            
+                            await interaction.response.send_message("✅ Payment approved and item delivered!", ephemeral=True)
                         else:
                             logger.error(f"Failed to process delivery for payment {self.payment_id}")
                             await interaction.response.send_message("❌ Error processing delivery.", ephemeral=True)
@@ -1415,29 +1350,13 @@ class PurchaseSteamModal(Modal):
                     except Exception as e:
                         logger.error(f"Erro ao deletar thread: {str(e)}")
 
-            view_thread = ThreadPaymentView(thread, payment_id, steam_target, self.item_id, self.item_type, self.item_data, insurance_choice, self.variation_index, override_script)
+            view_thread = ThreadPaymentView(thread, payment_id, steam_target, self.item_id, self.item_type, self.item_data, self.variation_index, override_script)
             try:
                 await thread.send(embed=embed, view=view_thread)
             except Exception as e:
                 logger.error(f"Error sending message in thread: {str(e)}")
                 await interaction.response.send_message("Error sending message in thread.", ephemeral=True)
                 return
-
-            # Register insurance temporarily (only warning in thread)
-            if insurance_choice:
-                is_vehicle = False
-                drops = 0
-                try:
-                    variation = self.item_data.get('variations', [None])[self.variation_index]
-                    if variation:
-                        is_vehicle = variation.get('is_vehicle', self.item_data.get('is_vehicle', False))
-                        drops = int(variation.get('insurance_drops', self.item_data.get('insurance_drops', 0) or 0))
-                except:
-                    pass
-                if is_vehicle and drops > 0:
-                    seguros[steam_target] = seguros.get(steam_target, 0) + drops
-                    await save_to_mongodb('seguros', steam_target, {"count": seguros[steam_target]})
-                    await thread.send(f"✅ Insurance contracted! {drops} insurance(s) added for SteamID `{steam_target}`. Use the insurance channel to activate.")
 
             await interaction.followup.send(f"✅ Order created. Check the thread: {thread.mention}", ephemeral=True)
         else:
@@ -1850,8 +1769,7 @@ async def process_approved_payment(interaction, item_id, item_type, steam_id, co
                     'item_price': item_data.get('price', 0.0),
                     'variation': variation_name,
                     'vehicle_type': item_data.get('vehicle_type'),
-                    'is_vehicle': item_data.get('is_vehicle', False),
-                    'insurance_drops': item_data.get('insurance_drops', 0),
+                    'is_vehicle': item_data.get('is_vehicle', False)
                 },
                 'buyer_info': buyer_info,
                 'delivery_info': {
@@ -1995,6 +1913,16 @@ async def send_control_panel_info():
             value="List all linked players (Steam ID, Discord ID, Discord Name)",
             inline=False
         )
+        embed_commands.add_field(
+            name="!o",
+            value="Show dropdown menu of all buyers with detailed purchase history",
+            inline=False
+        )
+        embed_commands.add_field(
+            name="!allo",
+            value="Display summary of all buyers with total spent and number of products purchased",
+            inline=False
+        )
         await control_channel.send(embed=embed_commands)
         
         # Statistics embed
@@ -2011,11 +1939,6 @@ async def send_control_panel_info():
         embed_stats.add_field(
             name="🎫 Coupons",
             value=f"{len(coupons)} active coupons",
-            inline=True
-        )
-        embed_stats.add_field(
-            name="🛡️ Insurance",
-            value=f"{len(seguros)} active insurances",
             inline=True
         )
         await control_channel.send(embed=embed_stats)
@@ -2444,18 +2367,53 @@ class BuyerSelectView(View):
             inline=False
         )
         
-        # Show recent purchases (last 10)
+        # Show recent purchases (last 10) with full details
         purchases = buyer_data.get('purchases', [])
         if purchases:
             purchase_list = []
             for purchase in purchases[-10:]:  # Last 10
                 item_name = purchase.get('item_name', 'Unknown')
+                delivery_type = purchase.get('delivery_type', 'item')
                 amount = purchase.get('amount', 0)
                 timestamp = purchase.get('timestamp', 'Unknown')
-                purchase_list.append(f"• **{item_name}** - {amount:.2f} {PAYPAL_CURRENCY} ({timestamp[:10]})")
+                steam_id = purchase.get('steam_id', 'N/A')
+                coupon = purchase.get('coupon_code', None)
+                
+                # Get delivered content
+                delivered_items = purchase.get('delivered_items', [])
+                vehicle_class = purchase.get('vehicle_class', None)
+                
+                # Build purchase info
+                purchase_info = f"• **{item_name}**"
+                
+                # Add delivery type icon
+                if delivery_type == 'vehicle':
+                    purchase_info += " 🚗"
+                else:
+                    purchase_info += " 📦"
+                
+                purchase_info += f" - {amount:.2f} {PAYPAL_CURRENCY}"
+                purchase_info += f"\n  └ Steam: `{steam_id}`"
+                
+                # Add delivered content
+                if delivery_type == 'vehicle' and vehicle_class:
+                    purchase_info += f"\n  └ Vehicle: `{vehicle_class}`"
+                elif delivered_items:
+                    items_str = ", ".join(delivered_items[:3])  # First 3 items
+                    if len(delivered_items) > 3:
+                        items_str += f" +{len(delivered_items)-3} more"
+                    purchase_info += f"\n  └ Items: `{items_str}`"
+                
+                # Add coupon if used
+                if coupon:
+                    purchase_info += f"\n  └ Coupon: `{coupon}`"
+                
+                purchase_info += f"\n  └ Date: {timestamp[:10]}"
+                
+                purchase_list.append(purchase_info)
             
             embed.add_field(
-                name=f"Recent Purchases (Last {len(purchases[-10:])})",
+                name=f"📋 Recent Purchases (Last {len(purchases[-10:])})",
                 value="\n".join(purchase_list) if purchase_list else "No purchases",
                 inline=False
             )
@@ -2499,12 +2457,23 @@ async def show_buyers_menu(ctx):
             
             buyers_data[discord_id]['total_purchases'] += 1
             buyers_data[discord_id]['total_spent'] += float(purchase.get('amount', 0))
+            
+            # Extract delivery info
+            delivery_info = purchase.get('delivery_info', {})
+            item_info = purchase.get('item_info', {})
+            coupon_info = purchase.get('coupon_info', {})
+            
             buyers_data[discord_id]['purchases'].append({
                 'purchase_id': purchase_id,
-                'item_name': purchase.get('item_info', {}).get('item_name', 'Unknown'),
+                'item_name': item_info.get('item_name', 'Unknown'),
+                'delivery_type': item_info.get('delivery_type', 'item'),
                 'amount': float(purchase.get('amount', 0)),
                 'timestamp': purchase.get('timestamp', 'Unknown'),
-                'payment_id': purchase.get('payment_id', 'N/A')
+                'payment_id': purchase.get('payment_id', 'N/A'),
+                'steam_id': delivery_info.get('steam_id', 'N/A'),
+                'delivered_items': delivery_info.get('items_delivered', []),
+                'vehicle_class': delivery_info.get('vehicle_class', None),
+                'coupon_code': coupon_info.get('coupon_code', None)
             })
         
         if not buyers_data:
@@ -2656,8 +2625,7 @@ async def create_test_purchases(ctx, count: int = 5):
                     'item_price': item['price'],
                     'variation': None,
                     'vehicle_type': 'spawn_vehicle' if item['delivery_type'] == 'vehicle' else None,
-                    'is_vehicle': item['delivery_type'] == 'vehicle',
-                    'insurance_drops': 0,
+                    'is_vehicle': item['delivery_type'] == 'vehicle'
                 },
                 'buyer_info': {
                     'discord_id': buyer['discord_id'],
