@@ -2127,7 +2127,7 @@ async def config_command(ctx):
                 view_pass = ItemViewForChannel(pass_id, data)
                 await sales_channel.send(embed=embed, view=view_pass)
             
-            await interaction.followup.send(f"✅ Store refreshed! {len(items_catalog)} items and {len(passes_catalog)} passes displayed.", ephemeral=True)
+            await interaction.followup.send(f"✅ Store refreshed! {len(items_catalog)} items displayed.", ephemeral=True)
         except Exception as e:
             logger.error(f"Error refreshing store: {str(e)}")
             await interaction.followup.send(f"Error refreshing store: {str(e)}", ephemeral=True)
