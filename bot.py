@@ -691,23 +691,31 @@ class DeleteVehicleModal(Modal):
 class CreateItemModal(Modal):
     def __init__(self):
         super().__init__(title="Create New Item")
-        self.name = TextInput(label="Item Name", placeholder="Ex: Backpack", required=True)
+        self.name_desc = TextInput(
+            label="Name | Description",
+            placeholder="Ex: Backpack | High capacity backpack for survival",
+            style=discord.TextStyle.short,
+            required=True
+        )
         currency_label = '€' if PAYPAL_CURRENCY == 'EUR' else PAYPAL_CURRENCY
         self.price = TextInput(label=f"Price ({currency_label})", placeholder="Ex: 10.00", required=True)
-        self.image_url = TextInput(label="Image URL (optional)", placeholder="https://...", required=False)
+        self.image_url = TextInput(
+            label="Image URL (optional)",
+            placeholder="https://...",
+            required=False
+        )
         self.variations = TextInput(
             label="Variations (JSON)",
-            placeholder='Ex: [{"name":"Black","script":{"itemsToGive":["Item"], "banking": true}}]',
+            placeholder='Ex: [{"name":"Black","script":{"itemsToGive":["Item"]}}]',
             style=discord.TextStyle.paragraph,
             required=True
         )
         self.vehicle_info = TextInput(
-            label="Vehicle and Insurance (ex: y,3)",
-            placeholder="Ex: y,3 (vehicle with 3 insurance) or n,0 (no vehicle)",
-            required=False,
-            default="n,0"
+            label="Is Vehicle? (optional)",
+            placeholder="Ex: y (vehicle) or n (item)",
+            required=False
         )
-        self.add_item(self.name)
+        self.add_item(self.name_desc)
         self.add_item(self.price)
         self.add_item(self.image_url)
         self.add_item(self.variations)
@@ -715,6 +723,15 @@ class CreateItemModal(Modal):
 
     async def on_submit(self, interaction: discord.Interaction):
         try:
+            # Parse name and description
+            name_desc_parts = self.name_desc.value.split('|')
+            item_name = name_desc_parts[0].strip()
+            item_description = name_desc_parts[1].strip() if len(name_desc_parts) > 1 else ""
+            
+            if not item_name:
+                await interaction.response.send_message("Item name is required.", ephemeral=True)
+                return
+            
             price = float(self.price.value.replace(',', '.'))
             if price < 0:
                 await interaction.response.send_message("Price cannot be negative.", ephemeral=True); return
@@ -728,32 +745,26 @@ class CreateItemModal(Modal):
                 if 'name' not in v or 'script' not in v:
                     await interaction.response.send_message("Each variation needs 'name' and 'script'.", ephemeral=True); return
 
-            vi = self.vehicle_info.value.strip().lower()
+            # Parse vehicle info
             is_vehicle = False
-            drops = 0
-            if vi:
-                parts = [p.strip() for p in vi.split(',') if p.strip() != '']
-                if parts:
-                    is_vehicle = parts[0] in ('s','y','sim','yes','1','true')
-                    if len(parts) > 1:
-                        try:
-                            drops = int(parts[1])
-                        except:
-                            drops = 0
+            if self.vehicle_info.value:
+                vi = self.vehicle_info.value.strip().lower()
+                is_vehicle = vi in ('s','y','sim','yes','1','true')
 
             item_id = generate_unique_id("item")
             item_obj = {
-                "name": self.name.value,
+                "name": item_name,
+                "description": item_description,
                 "price": price,
-                "image_url": self.image_url.value,
+                "image_url": self.image_url.value if self.image_url.value else "",
                 "is_vehicle": is_vehicle,
-                "insurance_drops": drops,
+                "insurance_drops": 0,
                 "variations": variations
             }
             items_catalog[item_id] = item_obj
             await save_to_mongodb('items_catalog', item_id, item_obj)
             await save_list_to_txt(ITEMS_LIST_TXT, items_catalog)
-            await interaction.response.send_message(f"✅ Item **{self.name.value}** created with ID `{item_id}`.", ephemeral=True)
+            await interaction.response.send_message(f"✅ Item **{item_name}** created with ID `{item_id}`.", ephemeral=True)
         except Exception as e:
             await interaction.response.send_message(f"Error creating item: {str(e)}", ephemeral=True)
 
@@ -948,6 +959,13 @@ class CreateVehicleModal(Modal):
         self.name = TextInput(label="Vehicle Name", placeholder="Ex: RAM 1500 TRX Black", required=True)
         currency_label = '€' if PAYPAL_CURRENCY == 'EUR' else PAYPAL_CURRENCY
         self.price = TextInput(label=f"Price ({currency_label})", placeholder="Ex: 50.00", required=True)
+        self.description = TextInput(
+            label="Description (optional)",
+            placeholder="Ex: Powerful off-road vehicle",
+            style=discord.TextStyle.paragraph,
+            required=False,
+            max_length=1024
+        )
         self.class_name = TextInput(label="Vehicle Class Name", placeholder="Ex: CrSk_RAM_1500_TRX_Black", required=True)
         self.vehicle_config = TextInput(
             label="Vehicle Config (spawns,cooldown,guarantee)",
@@ -955,12 +973,11 @@ class CreateVehicleModal(Modal):
             required=True,
             default="7,600,604800"
         )
-        self.image_url = TextInput(label="Image URL (optional)", placeholder="https://...", required=False)
         self.add_item(self.name)
         self.add_item(self.price)
+        self.add_item(self.description)
         self.add_item(self.class_name)
         self.add_item(self.vehicle_config)
-        self.add_item(self.image_url)
 
     async def on_submit(self, interaction: discord.Interaction):
         try:
@@ -992,8 +1009,9 @@ class CreateVehicleModal(Modal):
             item_id = generate_unique_id("vehicle")
             item_obj = {
                 "name": self.name.value,
+                "description": self.description.value if self.description.value else "",
                 "price": price,
-                "image_url": self.image_url.value,
+                "image_url": "",
                 "is_vehicle": True,
                 "vehicle_type": "spawn_vehicle",  # Special marker for vehicle spawn system
                 "insurance_drops": 0,
