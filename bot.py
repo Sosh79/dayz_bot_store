@@ -2384,6 +2384,307 @@ async def limpar_command(ctx, steam_id: str):
     else:
         await ctx.send("File not found.")
 
+class BuyerSelectView(View):
+    def __init__(self, buyers_data):
+        super().__init__(timeout=120)
+        self.message = None
+        self.buyers_data = buyers_data
+        
+        # Build options from buyers
+        options = []
+        for discord_id, data in list(buyers_data.items())[:25]:  # Discord limit 25
+            discord_name = data.get('discord_name', 'Unknown')
+            total_purchases = data.get('total_purchases', 0)
+            options.append(discord.SelectOption(
+                label=f"{discord_name} ({total_purchases} purchases)",
+                value=discord_id,
+                description=f"Discord ID: {discord_id}"
+            ))
+        
+        if not options:
+            options = [discord.SelectOption(label="No buyers found", value="none")]
+        
+        self.select_menu = discord.ui.Select(
+            placeholder="Select a buyer to view details...",
+            options=options
+        )
+        self.select_menu.callback = self.select_buyer
+        self.add_item(self.select_menu)
+    
+    async def on_timeout(self):
+        if self.message:
+            try:
+                await self.message.edit(content="⏳ Buyer selection expired.", view=None)
+            except:
+                pass
+    
+    async def select_buyer(self, interaction: discord.Interaction):
+        if self.select_menu.values[0] == "none":
+            await interaction.response.send_message("No buyers available.", ephemeral=True)
+            return
+        
+        discord_id = self.select_menu.values[0]
+        buyer_data = self.buyers_data.get(discord_id, {})
+        
+        # Create detailed embed
+        embed = discord.Embed(
+            title=f"👤 Buyer Details: {buyer_data.get('discord_name', 'Unknown')}",
+            color=discord.Color.blue()
+        )
+        
+        embed.add_field(
+            name="Discord Info",
+            value=f"**ID:** `{discord_id}`\n**Name:** {buyer_data.get('discord_name', 'Unknown')}",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="Purchase Statistics",
+            value=f"**Total Purchases:** {buyer_data.get('total_purchases', 0)}\n**Total Spent:** {buyer_data.get('total_spent', 0):.2f} {buyer_data.get('currency', PAYPAL_CURRENCY)}",
+            inline=False
+        )
+        
+        # Show recent purchases (last 10)
+        purchases = buyer_data.get('purchases', [])
+        if purchases:
+            purchase_list = []
+            for purchase in purchases[-10:]:  # Last 10
+                item_name = purchase.get('item_name', 'Unknown')
+                amount = purchase.get('amount', 0)
+                timestamp = purchase.get('timestamp', 'Unknown')
+                purchase_list.append(f"• **{item_name}** - {amount:.2f} {PAYPAL_CURRENCY} ({timestamp[:10]})")
+            
+            embed.add_field(
+                name=f"Recent Purchases (Last {len(purchases[-10:])})",
+                value="\n".join(purchase_list) if purchase_list else "No purchases",
+                inline=False
+            )
+        
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.command(name="o")
+async def show_buyers_menu(ctx):
+    """Show dropdown menu of all buyers - admin only"""
+    if ctx.author.id != ADMIN_ID:
+        await ctx.send("You don't have permission.")
+        return
+    
+    try:
+        # Load all purchases from MongoDB
+        all_purchases = await load_from_mongodb('purchases')
+        
+        if not all_purchases:
+            await ctx.send("📋 No purchases found in database.")
+            return
+        
+        # Organize purchases by buyer
+        buyers_data = {}
+        for purchase_id, purchase in all_purchases.items():
+            buyer_info = purchase.get('buyer_info', {})
+            discord_id = buyer_info.get('discord_id')
+            
+            if not discord_id:
+                continue
+            
+            if discord_id not in buyers_data:
+                buyers_data[discord_id] = {
+                    'discord_id': discord_id,
+                    'discord_name': buyer_info.get('discord_name', 'Unknown'),
+                    'discord_display_name': buyer_info.get('discord_display_name', 'Unknown'),
+                    'total_purchases': 0,
+                    'total_spent': 0.0,
+                    'currency': purchase.get('currency', PAYPAL_CURRENCY),
+                    'purchases': []
+                }
+            
+            buyers_data[discord_id]['total_purchases'] += 1
+            buyers_data[discord_id]['total_spent'] += float(purchase.get('amount', 0))
+            buyers_data[discord_id]['purchases'].append({
+                'purchase_id': purchase_id,
+                'item_name': purchase.get('item_info', {}).get('item_name', 'Unknown'),
+                'amount': float(purchase.get('amount', 0)),
+                'timestamp': purchase.get('timestamp', 'Unknown'),
+                'payment_id': purchase.get('payment_id', 'N/A')
+            })
+        
+        if not buyers_data:
+            await ctx.send("📋 No buyers found in purchases.")
+            return
+        
+        # Show selection menu
+        view = BuyerSelectView(buyers_data)
+        message = await ctx.send("📋 **Select a buyer to view their details:**", view=view)
+        view.message = message
+        
+    except Exception as e:
+        await ctx.send(f"❌ Error loading buyers: {str(e)}")
+        logger.error(f"Error in !o command: {str(e)}\n{traceback.format_exc()}")
+
+@bot.command(name="allo")
+async def show_all_buyers_summary(ctx):
+    """Show summary of all buyers with total spent and items purchased - admin only"""
+    if ctx.author.id != ADMIN_ID:
+        await ctx.send("You don't have permission.")
+        return
+    
+    try:
+        # Load all purchases from MongoDB
+        all_purchases = await load_from_mongodb('purchases')
+        
+        if not all_purchases:
+            await ctx.send("📋 No purchases found in database.")
+            return
+        
+        # Organize purchases by buyer
+        buyers_summary = {}
+        for purchase_id, purchase in all_purchases.items():
+            buyer_info = purchase.get('buyer_info', {})
+            discord_id = buyer_info.get('discord_id')
+            
+            if not discord_id:
+                continue
+            
+            if discord_id not in buyers_summary:
+                buyers_summary[discord_id] = {
+                    'discord_name': buyer_info.get('discord_name', 'Unknown'),
+                    'total_purchases': 0,
+                    'total_spent': 0.0
+                }
+            
+            buyers_summary[discord_id]['total_purchases'] += 1
+            buyers_summary[discord_id]['total_spent'] += float(purchase.get('amount', 0))
+        
+        if not buyers_summary:
+            await ctx.send("📋 No buyers found.")
+            return
+        
+        # Sort by total spent (highest first)
+        sorted_buyers = sorted(buyers_summary.items(), key=lambda x: x[1]['total_spent'], reverse=True)
+        
+        # Create embed(s) - Discord limit is 25 fields per embed
+        embeds = []
+        current_embed = discord.Embed(
+            title="📊 All Buyers Summary",
+            description=f"Total Buyers: {len(buyers_summary)}",
+            color=discord.Color.gold()
+        )
+        
+        field_count = 0
+        for discord_id, data in sorted_buyers:
+            if field_count >= 25:
+                embeds.append(current_embed)
+                current_embed = discord.Embed(
+                    title="📊 All Buyers Summary (Continued)",
+                    color=discord.Color.gold()
+                )
+                field_count = 0
+            
+            current_embed.add_field(
+                name=f"👤 {data['discord_name']}",
+                value=f"**Spent:** {data['total_spent']:.2f} {PAYPAL_CURRENCY}\n**Products:** {data['total_purchases']}",
+                inline=True
+            )
+            field_count += 1
+        
+        if field_count > 0:
+            embeds.append(current_embed)
+        
+        # Send all embeds
+        for embed in embeds:
+            await ctx.send(embed=embed)
+        
+    except Exception as e:
+        await ctx.send(f"❌ Error loading buyers summary: {str(e)}")
+        logger.error(f"Error in !allo command: {str(e)}\n{traceback.format_exc()}")
+
+@bot.command(name="testpurchase")
+async def create_test_purchases(ctx, count: int = 5):
+    """Create test purchase data for testing - admin only"""
+    if ctx.author.id != ADMIN_ID:
+        await ctx.send("You don't have permission.")
+        return
+    
+    if count < 1 or count > 50:
+        await ctx.send("❌ Count must be between 1 and 50.")
+        return
+    
+    try:
+        # Sample test data
+        test_buyers = [
+            {"discord_id": "123456789012345678", "discord_name": "Ahmed_Test", "discord_display_name": "Ahmed"},
+            {"discord_id": "234567890123456789", "discord_name": "Mohammed_Test", "discord_display_name": "Mohammed"},
+            {"discord_id": "345678901234567890", "discord_name": "Ali_Test", "discord_display_name": "Ali"},
+            {"discord_id": "456789012345678901", "discord_name": "Omar_Test", "discord_display_name": "Omar"},
+            {"discord_id": "567890123456789012", "discord_name": "Khalid_Test", "discord_display_name": "Khalid"},
+        ]
+        
+        test_items = [
+            {"name": "AK-47 Rifle", "price": 15.00, "delivery_type": "item"},
+            {"name": "Military Backpack", "price": 10.00, "delivery_type": "item"},
+            {"name": "Offroad Vehicle", "price": 25.00, "delivery_type": "vehicle"},
+            {"name": "Medical Supplies Kit", "price": 8.00, "delivery_type": "item"},
+            {"name": "Night Vision Goggles", "price": 20.00, "delivery_type": "item"},
+            {"name": "M4A1 Carbine", "price": 18.00, "delivery_type": "item"},
+            {"name": "SUV Vehicle", "price": 30.00, "delivery_type": "vehicle"},
+            {"name": "Ghillie Suit", "price": 12.00, "delivery_type": "item"},
+        ]
+        
+        import random
+        created_count = 0
+        
+        for i in range(count):
+            buyer = random.choice(test_buyers)
+            item = random.choice(test_items)
+            
+            purchase_id = generate_unique_id("testpurchase")
+            
+            # Random timestamp within last 30 days
+            days_ago = random.randint(0, 30)
+            hours_ago = random.randint(0, 23)
+            timestamp = datetime.now() - __import__('datetime').timedelta(days=days_ago, hours=hours_ago)
+            
+            purchase_data = {
+                'purchase_id': purchase_id,
+                'timestamp': timestamp.isoformat(),
+                'payment_id': f"TEST-{random.randint(10000, 99999)}",
+                'amount': item['price'],
+                'currency': PAYPAL_CURRENCY,
+                'item_info': {
+                    'item_id': f"test_item_{i}",
+                    'item_name': item['name'],
+                    'delivery_type': item['delivery_type'],
+                    'item_price': item['price'],
+                    'variation': None,
+                    'vehicle_type': 'spawn_vehicle' if item['delivery_type'] == 'vehicle' else None,
+                    'is_vehicle': item['delivery_type'] == 'vehicle',
+                    'insurance_drops': 0,
+                },
+                'buyer_info': {
+                    'discord_id': buyer['discord_id'],
+                    'discord_name': buyer['discord_name'],
+                    'discord_display_name': buyer['discord_display_name'],
+                },
+                'delivery_info': {
+                    'steam_id': f"76561198{random.randint(100000000, 999999999)}",
+                    'items_delivered': ['TestItem1', 'TestItem2'] if item['delivery_type'] == 'item' else [],
+                    'vehicle_class': 'OffroadHatchback' if item['delivery_type'] == 'vehicle' else None,
+                },
+                'coupon_info': {
+                    'coupon_code': None,
+                    'discount_applied': 0,
+                },
+                'status': 'completed'
+            }
+            
+            await save_to_mongodb('purchases', purchase_id, purchase_data)
+            created_count += 1
+        
+        await ctx.send(f"✅ Created {created_count} test purchases successfully!\n\nYou can now test:\n• `!o` - View individual buyers\n• `!allo` - View all buyers summary")
+        
+    except Exception as e:
+        await ctx.send(f"❌ Error creating test purchases: {str(e)}")
+        logger.error(f"Error in !testpurchase command: {str(e)}\n{traceback.format_exc()}")
+
 async def main():
     try:
         async with bot:
